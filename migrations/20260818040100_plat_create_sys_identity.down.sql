@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS sys_session;
+DROP TABLE IF EXISTS sys_user;

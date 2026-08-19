@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS sys_setting;
+DROP TABLE IF EXISTS sys_tenant;

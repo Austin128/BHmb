@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的旧流水线自动取消，避免排队浪费额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24"
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: 后端（构建 / 测试 / 竞态）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 格式检查
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal ./migrations)"
+          if [[ -n "$unformatted" ]]; then
+            echo "以下文件未格式化：" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 错误码一致性
+        run: ./scripts/check-errcode.sh
+
+      - name: 构建
+        run: go build ./...
+
+      - name: 单元测试（含竞态检测）
+        run: go test -race -count=1 -timeout 10m ./...
+
+      - name: service 层覆盖率门槛
+        run: make test-cover
+
+  migrations:
+    name: 迁移演练（up / down / up）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: sqlite 迁移演练
+        run: ./scripts/migrate-test.sh
+
+  frontend:
+    name: 前端（类型检查 / 测试 / 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 安装依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        working-directory: web
+        run: pnpm typecheck
+
+      - name: 单元测试
+        working-directory: web
+        run: pnpm test
+
+      - name: 生产构建
+        working-directory: web
+        run: pnpm build
+
+      # 产物给冒烟 job 复用，避免重复构建前端
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: internal/web/dist
+          retention-days: 1
+
+  smoke:
+    name: 认证链路冒烟（内置 SPA）
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/web/dist
+
+      - name: 确认前端产物已就位
+        run: test -f internal/web/dist/index.html
+
+      - name: 认证链路端到端冒烟
+        run: ./scripts/auth-smoke.sh
+
+  vuln:
+    name: 依赖漏洞扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

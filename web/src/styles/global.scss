@@ -1,0 +1,62 @@
+/* 全局基线样式。深浅色统一走 Arco 的 CSS 变量（--color-*），
+   自有变量以 --nova- 前缀，随 html[data-nova-theme] 切换。 */
+
+:root {
+  --nova-header-height: 60px;
+  --nova-sider-width: 220px;
+  --nova-radius: 6px;
+  --nova-login-bg: linear-gradient(135deg, #eef2ff 0%, #f7f8fa 60%, #e9f3ff 100%);
+  --nova-login-card-bg: rgba(255, 255, 255, 0.92);
+}
+
+html[data-nova-theme='dark'] {
+  --nova-login-bg: linear-gradient(135deg, #17171a 0%, #1d1d20 60%, #16222e 100%);
+  --nova-login-card-bg: rgba(35, 35, 38, 0.92);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: var(--color-text-1);
+  background-color: var(--color-bg-1);
+  /* 主题切换时避免大面积闪白 */
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+a {
+  color: rgb(var(--primary-6));
+  text-decoration: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-fill-4);
+  border-radius: 3px;
+}
+
+/* 尊重系统「减少动效」设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

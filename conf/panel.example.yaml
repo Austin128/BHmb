@@ -1,0 +1,123 @@
+# NovaPanel 控制面配置示例
+# 复制为 conf/panel.yaml 后按需修改；所有键均可用 NOVA_ 前缀环境变量覆盖，
+# 规则为「大写 + 点/连字符替换为下划线」，例如：
+#   NOVA_SERVER_PORT=8443
+#   NOVA_DATABASE_DRIVER=mysql
+#   NOVA_LOG_LEVEL=debug
+# 初始管理员口令可通过 NOVA_INITIAL_ADMIN_PASSWORD 注入；未注入时启动会随机生成
+# 并仅打印一次，不落库、不写日志文件。
+
+server:
+  host: 0.0.0.0
+  port: 34567
+  base_path: /
+  default_locale: zh-CN
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  shutdown_timeout: 15s
+  # 面板入口路径；保持默认即根路径
+  entrance: /
+  max_body_size_mb: 32
+  tls:
+    enabled: true
+    cert_file: /opt/novapanel/conf/certs/panel.crt
+    key_file: /opt/novapanel/conf/certs/panel.key
+    min_version: "1.2"
+    # 证书缺失时自动生成自签证书（生产建议换成受信证书）
+    auto_self_signed: true
+
+database:
+  # sqlite | mysql | postgres
+  driver: sqlite
+  # 非 sqlite 时填 dsn，例如：
+  # dsn: "nova:pass@tcp(127.0.0.1:3306)/novapanel?charset=utf8mb4&parseTime=True&loc=Local"
+  dsn: ""
+  path: /opt/novapanel/data/nova.db
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime: 1h
+  slow_threshold: 200ms
+  log_level: warn
+  # 关闭后启动只检测待执行迁移并拒绝启动，由 novactl migrate up 手动执行
+  auto_migrate: true
+
+kv:
+  driver: bbolt
+  path: /opt/novapanel/data/kv.bolt
+  redis:
+    addr: 127.0.0.1:6379
+    password: ""
+    db: 0
+    pool_size: 20
+
+security:
+  # 主密钥文件；缺失时首次启动自动生成，权限 0600，务必纳入备份
+  master_key_file: /opt/novapanel/conf/master.key
+  jwt_access_ttl: 15m
+  jwt_refresh_ttl: 168h
+  jwt_remember_ttl: 720h
+  bcrypt_cost: 12
+  login_fail_limit: 5
+  login_lock_duration: 15m
+  ip_whitelist: []
+  totp_issuer: NovaPanel
+  session_max_per_user: 5
+  command_blacklist_enabled: true
+  terminal_record_enabled: true
+  dangerous_action_reauth: true
+
+log:
+  level: info
+  dir: /opt/novapanel/logs
+  max_size_mb: 100
+  max_backups: 10
+  max_age_days: 30
+  compress: true
+  # 前台调试时置 true，日志同时输出到 stdout
+  console: false
+  audit_retention_days: 180
+
+runtime:
+  task_pool_size: 200
+  bg_pool_size: 32
+  max_streams: 200
+  global_rate_limit: 2000
+  user_write_rate_limit: 60
+
+# 以下模块尚未在当前里程碑实现，保留键位以免后续配置迁移；
+# 修改它们暂不会改变运行行为。
+agent:
+  grpc_port: 34568
+  advertise_addr: ""
+  heartbeat_interval: 10s
+  offline_threshold: 3
+  session_ttl: 5m
+  buffer_max_mb: 64
+  task_default_timeout: 60s
+  register_token_ttl: 30m
+  mtls:
+    ca_cert: /opt/novapanel/conf/certs/ca.crt
+    ca_key: /opt/novapanel/conf/certs/ca.key
+    server_cert: /opt/novapanel/conf/certs/agent-server.crt
+    server_key: /opt/novapanel/conf/certs/agent-server.key
+    client_cert_ttl: 8760h
+
+monitor:
+  enabled: true
+  collect_interval: 15s
+  queue_size: 50000
+  batch_size: 1000
+  batch_interval: 2s
+  tsdb:
+    driver: sqlite
+    retention_raw: 168h
+    retention_5m: 720h
+    retention_1h: 8760h
+    downsample_cron: "*/5 * * * *"
+
+cluster:
+  mode: auto
+  builtin_agent: true
+  drift_check_cron: "0 * * * *"
+  node_id: 1

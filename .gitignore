@@ -1,0 +1,23 @@
+# 构建产物
+bin/
+coverage.out
+*.test
+
+# 运行时数据
+.dev/
+data/
+logs/
+conf/panel.yaml
+conf/master.key
+conf/certs/
+
+# 前端
+node_modules/
+web/dist/
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+
+# 编辑器与系统
+.DS_Store
+.idea/
+.vscode/
