@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25"
   NODE_VERSION: "22"
 
 jobs:
@@ -89,8 +89,9 @@ jobs:
             cat dist/SHA256SUMS
             printf '```\n\n'
             printf '## 发布前已验证\n\n'
-            printf '- 容器内真机演练：安装 → systemd 拉起 → 健康检查 → 用初始口令登录 → `bh` 子命令 → 改端口 → 重复安装升级 → `--purge` 卸载\n'
-            printf '- CI：go vet、竞态单测、service 覆盖率门槛、错误码一致性、迁移 up/down/up、认证与文件管理链路冒烟、前端类型检查与单测、govulncheck\n'
+            # 格式串以 - 开头会被 printf 当成选项，必须走 %s
+            printf '%s\n' '- 容器内真机演练：安装 → systemd 拉起 → 健康检查 → 用初始口令登录 → `bh` 子命令 → 改端口 → 重复安装升级 → `--purge` 卸载'
+            printf '%s\n' '- CI：go vet、竞态单测、service 覆盖率门槛、错误码一致性、迁移 up/down/up、认证与文件管理链路冒烟、前端类型检查与单测、govulncheck'
           } >notes.md
 
       - name: 建 Release 并上传资产
