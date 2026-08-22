@@ -2,11 +2,12 @@
 
 服务器控制面板，Go 后端 + Vue 3 前端，单二进制内置前端产物。
 
-当前仓库完成的是**认证与权限底座**：统一响应信封、链路追踪、JWT 访问令牌、服务端 RBAC、
-不透明刷新令牌轮换与复用检测、登录 / 2FA / 刷新 / 登出 / 个人资料、健康检查，
-以及配套的 Vue 3 + Arco Design 控制台（登录、二次验证、动态权限菜单、主题、国际化）。
+当前仓库完成的是**认证与权限底座**加**文件管理**：统一响应信封、链路追踪、JWT 访问令牌、
+服务端 RBAC、不透明刷新令牌轮换与复用检测、登录 / 2FA / 刷新 / 登出 / 个人资料、健康检查，
+白名单化的文件浏览 / 读写 / 上传下载（含分片断点续传与秒传）/ 复制移动 / 压缩解压 / 权限修改，
+以及配套的 Vue 3 + Arco Design 控制台（登录、二次验证、动态权限菜单、文件管理页、主题、国际化）。
 
-> 文档 `docs/` 描述的文件管理、WebSSH、容器编排、监控告警、应用商店、多节点集群等模块
+> 文档 `docs/` 描述的 WebSSH、容器编排、监控告警、应用商店、多节点集群等模块
 > **尚未实现**；`cmd/agent` 目前只是可编译的占位程序，运行会明确提示不支持。
 
 ## 技术栈
@@ -30,14 +31,84 @@ internal/
   repository/   数据库、迁移器、种子、用户/角色/会话仓储
   security/     主密钥、HKDF、bcrypt、JWT、刷新令牌、撤销、自签证书
   service/auth/ 认证业务编排
+  service/file/ 文件管理业务（pathguard 为路径白名单守卫）
   web/          go:embed 前端产物（internal/web/dist）
 migrations/     版本化 SQL 迁移（up/down 成对）
 web/            Vue 3 前端工程（构建输出到 internal/web/dist）
-scripts/        错误码一致性、迁移演练、认证冒烟、开发证书
+scripts/        bh 管理命令、install/uninstall、错误码一致性、迁移演练、认证冒烟、开发证书
+deploy/         systemd 单元模板
 conf/           配置示例
 ```
 
-## 快速开始
+## 服务器安装（Linux + systemd）
+
+安装完成后用 **`bh`** 管理面板，作用与宝塔的 `bt` 相同：直接运行进菜单，也能带子命令用。
+
+### 一键安装
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Austin128/BHmb/main/scripts/install.sh | sudo bash
+```
+
+脚本按 GitHub Release → 本地包 → 源码构建的顺序取安装内容。**仓库目前还没有发布 Release**，
+所以在线安装会回落到源码构建（需要服务器上有 Go 1.24 与 pnpm）。在打出第一个 tag 之前，
+推荐下面两种确定可用的方式：
+
+```bash
+# 方式一：服务器上克隆后从源码安装（需 Go 1.24 + pnpm）
+git clone https://github.com/Austin128/BHmb.git && cd BHmb
+sudo NOVA_FROM_SOURCE=1 bash scripts/install.sh
+```
+
+```bash
+# 方式二：本地打包后离线安装（服务器不需要任何工具链）
+make release                                              # 产物在 dist/
+scp dist/novapanel-*-linux-amd64.tar.gz root@<服务器>:/tmp/pkg.tar.gz
+
+# 再到服务器上执行
+mkdir -p /tmp/nova && tar -xzf /tmp/pkg.tar.gz -C /tmp/nova
+NOVA_PKG=/tmp/pkg.tar.gz bash /tmp/nova/scripts/install.sh
+```
+
+安装脚本做的事：解包到 `/opt/novapanel`、按示例生成 `conf/panel.yaml`、注册并启用
+systemd 服务、生成 16 位随机 admin 口令并只打印一次、探测 `/api/v1/health` 直到通过、
+放行 firewalld/ufw 端口、把 `bh` 链接到 `/usr/local/bin`。
+
+可用环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `NOVA_HOME` | `/opt/novapanel` | 安装目录 |
+| `NOVA_PORT` | `34567` | 面板端口 |
+| `NOVA_VERSION` | 最新 Release | 指定版本 tag |
+| `NOVA_PKG` | 空 | 用本地 tar.gz 离线安装 |
+| `NOVA_FROM_SOURCE` | `0` | 在仓库目录内从源码构建安装 |
+
+重复执行安装脚本即为升级：只替换程序与脚本，`conf/` 与 `data/` 原样保留。
+
+### bh 命令
+
+```bash
+bh                 # 进入交互菜单（等同宝塔 bt）
+bh info            # 面板地址、账号、关键路径
+bh start|stop|restart|reload
+bh status          # systemctl status
+bh log [行数]      # 最近日志，bh logf 实时跟踪
+bh passwd [用户]   # 重置口令，默认 admin，随机生成并只打印一次
+bh port 8443       # 改端口并同步放行防火墙
+bh update          # 升级
+bh uninstall       # 卸载，默认保留 data/ 与 conf/；--purge 连数据一起删
+```
+
+### 安全提醒
+
+- 面板默认监听 `0.0.0.0` 且以 root 运行（后续里程碑要管理运行环境与系统服务）。
+  公网暴露前请用安全组或 `security.ip_whitelist` 限制来源 IP。
+- 默认自签证书会被浏览器标记不受信，生产环境请把 `server.tls.cert_file`/`key_file`
+  换成受信证书。
+- `/opt/novapanel/conf/master.key` 丢失会导致既有会话与加密字段不可用，务必纳入备份。
+
+## 快速开始（本地开发）
 
 ```bash
 # 1. 前端产物（Go 需要它来 embed）
@@ -98,6 +169,12 @@ novactl version
 - 权限在服务端解析，不写入 JWT 声明；改密会上移水位线，使该用户既有访问令牌立即失效。
 - 前端只在内存 / localStorage 持有访问令牌，刷新令牌由浏览器 Cookie 管理，JS 不可读。
 - 主密钥文件与私钥权限为 0600，务必纳入备份；丢失将无法解密既有敏感字段。
+- 文件管理的每个路径都先过 `internal/service/file/pathguard`：黑名单优先于白名单，
+  解析软链后二次校验，`file.allow_roots` 为空时整个模块拒绝服务（不会退化为放行 `/`）。
+  可访问范围、单文件编辑与上传上限均在 `conf/panel.yaml` 的 `file` 段配置。
+- 分片上传的分片与会话元数据写在面板自管的 `file.upload_temp_dir`（默认系统临时目录下
+  `novapanel-upload`），不写用户目录；会话 24 小时过期（`400007`），`init` 时惰性清理。
+  大于 8 MB 的文件前端自动走 init → chunk → complete，刷新页面后可继续续传。
 
 错误码为 6 位 `MMSSNN`，以 `internal/pkg/errs/code.go`、`statusMap` 与
 `docs/05-API接口规范.md` 三处一致为准，由 `make check-errcode` 守护。
@@ -116,5 +193,7 @@ make smoke          # 真实启动面板，跑完整认证链路与内置 SPA
 ```
 
 `make smoke` 覆盖：健康检查信封、登录下发令牌与 HttpOnly Cookie、匿名访问 401、
-profile 权限与菜单、刷新轮换与旧令牌复用拒绝、登出后令牌失效、SPA 首页与深链回落、
+profile 权限与菜单、刷新轮换与旧令牌复用拒绝、文件读写与 Range 下载、
+分片上传的断点续传 / 缺片 `400006` / 合并哈希校验 / 秒传 / 放弃会话、
+登出后令牌失效、SPA 首页与深链回落、
 未知 API 路由返回 JSON 404 信封。CI 工作流见 `.github/workflows/ci.yml`。

@@ -458,27 +458,27 @@ func evalExisting(p string) (string, error) {
 sequenceDiagram
     participant B as 浏览器
     participant P as 面板 /api/v1/file/upload
-    participant D as 临时目录 /www/.nova_upload
+    participant D as 临时目录 file.upload_temp_dir
     participant A as Agent(远程节点)
-    B->>P: POST /upload/init {path,fileName,size,md5,chunkSize}
-    P->>P: 8.3 路径校验 + 配额校验 + 类型白名单
+    B->>P: POST /upload/init {path,filename,size,hash,chunkSize,conflict}
+    P->>P: 8.3 路径校验 + 大小上限校验
     P->>D: 建 <uploadId>/ 目录 + meta.json
-    P-->>B: {uploadId, chunkSize, uploaded:[], instant:false}
-    Note over B,P: md5 命中已有文件时 instant=true 直接秒传返回
+    P-->>B: {uploadId, chunkSize, totalChunks, uploadedChunks:[], expireAt, quickUpload:false}
+    Note over B,P: hash 命中同名同大小文件时 quickUpload=true 直接秒传返回
     loop 并发 3 个分片
-        B->>P: POST /upload/chunk (multipart: uploadId,index,chunkMd5,blob)
-        P->>D: 落盘 <uploadId>/<index>.part + 更新位图
-        P-->>B: {index, received, nextExpected}
+        B->>P: POST /upload/chunk (multipart: uploadId,index,checksum,chunk)
+        P->>D: 落盘 <uploadId>/<index>.part（先写 tmp 再改名）
+        P-->>B: {index, received, uploadedCount, totalChunks}
     end
-    B->>P: POST /upload/complete {uploadId}
-    P->>D: 按序合并 → 校验整包 md5
+    B->>P: POST /upload/complete {uploadId, hash}
+    P->>D: 按序合并 → 校验整包 sha256
     alt 本机
-        P->>P: rename 到目标路径 + chown/chmod
-    else 远程节点
+        P->>P: rename 到目标路径 + chmod 0644
+    else 远程节点（未实现）
         P->>A: FileService.PushChunk 流式转发
         A-->>P: 校验结果
     end
-    P-->>B: {path,size,md5}
+    P-->>B: {entry,path,size,hash,durationMs}
     P->>D: 清理 <uploadId>/
 ```
 
@@ -486,13 +486,13 @@ sequenceDiagram
 
 | 接口 | 方法 | 关键入参 | 出参 |
 | --- | --- | --- | --- |
-| `/api/v1/file/upload/init` | POST | `path` 目标目录、`fileName`、`size`、`md5`（整包，可为空）、`chunkSize`、`overwrite`（skip/rename/overwrite） | `uploadId`、`chunkSize`、`chunkCount`、`uploaded[]` 已收分片索引、`instant` 是否秒传 |
-| `/api/v1/file/upload/chunk` | POST | multipart：`uploadId`、`index`、`chunkMd5`、`chunk` | `index`、`received` 已收数、`nextExpected` |
-| `/api/v1/file/upload/complete` | POST | `uploadId` | `path`、`size`、`md5`、`duration` |
-| `/api/v1/file/upload/status` | GET | `uploadId` | `uploaded[]`、`expireAt`；断点续传时先调此接口 |
-| `/api/v1/file/upload/{uploadId}` | DELETE | 路径参数 | 取消并清理临时目录 |
+| `/api/v1/file/upload/init` | POST | `path` 目标目录、`filename`、`size`、`hash`（整包 sha256，可为空）、`chunkSize`、`conflict`（reject/rename/overwrite） | `uploadId`、`chunkSize`、`totalChunks`、`uploadedChunks[]` 已收分片索引、`expireAt`、`quickUpload` 是否秒传（为真时带 `entry`） |
+| `/api/v1/file/upload/chunk` | POST | multipart：`uploadId`、`index`、`checksum`（`md5:`/`sha256:` 前缀，可缺省）、`chunk` | `index`、`received` 本片字节数、`uploadedCount`、`totalChunks` |
+| `/api/v1/file/upload/complete` | POST | `uploadId`、`hash`（可缺省，非空时校整包） | `entry`、`path`、`size`、`hash`、`durationMs` |
+| `/api/v1/file/upload/status` | GET | `uploadId` | `uploadedChunks[]`、`missingChunks[]`、`expireAt`；断点续传时先调此接口 |
+| `/api/v1/file/upload/{uploadId}` | DELETE | 路径参数 | 取消并清理临时目录（幂等） |
 
-权限点统一 `file:file:create`；`overwrite=overwrite` 额外要求 `file:file:update`。
+权限点统一 `file:file:create`：五个接口都属「新建文件」语义，`DELETE` 只清服务端自管的分片会话，不动用户文件，因此不额外要求 `file:file:delete`。
 
 ### 8.5.3 参数建议值
 
@@ -500,48 +500,51 @@ sequenceDiagram
 | --- | --- | --- |
 | chunkSize | 8MB（可选 2/4/8/16MB） | 8MB 时 1GB 文件 128 个请求，HTTP 开销占比 < 1%；小于 2MB 时请求数过多，Nginx 反代场景下易触发限流 |
 | 并发数 | 3 | 单连接吞吐已可压满千兆；> 4 后磁盘随机写导致合并阶段变慢 |
-| 整包 md5 | 前端 Web Worker 分块流式计算 | 避免主线程卡顿；> 2GB 文件改为「首 8MB + 尾 8MB + size」的快速指纹用于秒传判断，`md5Mode=fast` 标注 |
-| 分片 md5 | 必填 | 服务端逐片校验，不一致返回 `400404` 要求重传该片 |
+| 整包哈希 | 前端 WebCrypto 计算 sha256 | 当前实现一次读入计算；非安全上下文（纯 HTTP）下 `crypto.subtle` 不可用，此时不传 `hash`，秒传与整包校验自动降级（Web Worker 流式计算与快速指纹尚未实现） |
+| 分片校验和 | 建议带上 `sha256:<hex>` | 服务端逐片校验，不一致返回 `400006` 要求重传该片；缺省时只校长度 |
 | 单文件上限 | 200GB | 由 `file.max_upload_size` 配置 |
-| 临时目录 | 与目标同分区的 `/www/.nova_upload` | 保证 complete 阶段 `rename` 为原子操作，不跨设备复制 |
-| 临时文件过期 | 24 小时 | cron 每小时清理 `mtime > 24h` 的 uploadId 目录 |
-| 上传限速 | 默认不限，可设 `file.upload_rate_limit`（MB/s） | 用 `golang.org/x/time/rate` 包装 `io.Reader` |
+| 临时目录 | `file.upload_temp_dir`，默认系统临时目录下 `novapanel-upload` | 由面板自管、不入白名单，上传中断不在站点目录留垃圾；合并时先写目标同目录的临时文件再 `rename`，保证原子且不跨设备 |
+| 临时文件过期 | 24 小时 | 过期会话访问返 `400007`；`init` 时惰性 GC，不额外起后台协程 |
+| 上传限速 | 未实现（规划 `file.upload_rate_limit`，MB/s） | 拟用 `golang.org/x/time/rate` 包装 `io.Reader` |
 
 ### 8.5.4 秒传、断点续传与合并
 
-秒传判定：`init` 阶段按 `md5 + size` 查 `file_transfer_task` 中最近 7 天成功记录的指纹索引；命中且源文件仍存在、且当前用户对源文件有读权限时，用 `os.Link` 建硬链（同分区）或 `io.Copy` 复制，返回 `instant=true`。跨租户不共享指纹，防止通过 md5 探测他人文件是否存在。
+秒传判定（当前实现）：`init` 阶段仅对目标路径本身比对——同名文件存在、大小一致且 sha256 与请求的 `hash` 相同时，直接返回 `quickUpload: true` 与 `entry`，不建会话。跨文件的指纹库秒传（`file_transfer_task` 指纹索引 + `os.Link` 硬链）尚未实现；引入时需按租户隔离指纹，防止用哈希探测他人文件是否存在。
 
-断点续传：`meta.json` 记录 `{uploadId,path,fileName,size,chunkSize,chunkCount,md5,bitmap,createdAt,owner}`，`bitmap` 为分片位图（`[]byte`，1 bit 1 片，1GB/8MB=128 片仅 16 字节）。浏览器侧把 `uploadId` 存 IndexedDB，刷新后按 `fileName+size+lastModified` 找回并调 `/upload/status` 拿已收列表续传。
+断点续传：会话目录下 `meta.json` 记录 `{uploadId,dir,filename,size,chunkSize,totalChunks,conflict,hash,createdAt}`，分片是否到位直接看 `<index>.part` 是否存在，因此除 `init` 外不再改写 meta，并发传分片无需加锁（位图方案未采用）。前端无需自行持久化 `uploadId`：用相同的 `path+filename+size+chunkSize+conflict` 重调 `init`，服务端会复用未过期会话并回传 `uploadedChunks`。
 
-合并实现要点：
+合并实现要点（`internal/service/file/chunk_upload.go` 的 `mergeParts`）：临时文件建在**目标目录**而非会话目录，逐片 `io.Copy` 并同步算 sha256，尺寸或哈希不符时返 `400006` 并删除临时文件；合并前用 `meta.json` 改名为 `.merging` 做互斥，避免并发 `complete` 把同一批分片合两次；合并失败会把锁还原，前端修正后可重试而不必重传分片。
 
 ```go
-func (s *Uploader) merge(m *Meta) (string, error) {
-    tmp := filepath.Join(m.Dir, "assembled.tmp")
-    dst, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-    if err != nil { return "", err }
-    defer dst.Close()
-    h := md5.New()
-    w := io.MultiWriter(dst, h)
-    for i := 0; i < m.ChunkCount; i++ {
-        part := filepath.Join(m.Dir, strconv.Itoa(i)+".part")
-        f, err := os.Open(part)
-        if err != nil { return "", fmt.Errorf("400405 分片 %d 缺失: %w", i, err) }
-        if _, err := io.CopyBuffer(w, f, s.buf(1<<20)); err != nil {
-            f.Close(); return "", err
-        }
-        f.Close()
-    }
-    if m.MD5 != "" && m.MD5Mode == "full" {
-        if got := hex.EncodeToString(h.Sum(nil)); got != m.MD5 {
-            return "", fmt.Errorf("400406 整包校验失败 expect=%s got=%s", m.MD5, got)
-        }
-    }
-    return tmp, nil // 由调用方 fsync 后 rename 到目标路径
+// 临时文件与目标同目录，保证 rename 原子且不跨设备
+tmp, err := os.CreateTemp(dir, ".upload-*")
+if err != nil { return nil, "", wrapFSError(err) }
+
+digest := sha256.New()
+var dst io.Writer = tmp
+if wantHash != "" { dst = io.MultiWriter(tmp, digest) }
+var total int64
+for i := 0; i < meta.TotalChunks; i++ {
+    part, err := os.Open(partPath(sessionDir, i))
+    if err != nil { cleanup(); return nil, "", wrapFSError(err) }
+    n, err := io.Copy(dst, part)
+    _ = part.Close()
+    if err != nil { cleanup(); return nil, "", wrapFSError(err) }
+    total += n
 }
+if total != meta.Size {
+    cleanup()
+    return nil, "", errs.ErrChunkChecksum.WithDetail("合并后大小 %d，声明 %d", total, meta.Size)
+}
+sum := "sha256:" + hex.EncodeToString(digest.Sum(nil))
+if wantHash != "" && !sameHash(wantHash, sum) {
+    cleanup()
+    return nil, "", errs.ErrChunkChecksum.WithDetail("整文件哈希不匹配")
+}
+// 之后 tmp.Sync() → chmod 0644 → 按 conflict 策略 rename 落地
 ```
 
-合并后先 `dst.Sync()` 再 `os.Rename`，保证断电不产生半截文件；目标已存在时按 `overwrite` 策略处理：`skip` 直接返回原文件信息，`rename` 追加 `(1)`、`(2)` 后缀，`overwrite` 先把旧文件移入回收站再替换。
+合并后先 `dst.Sync()` 再 `os.Rename`，保证断电不产生半截文件，并把 `CreateTemp` 的 0600 改为 0644 以供站点进程读取；目标已存在时按 `conflict` 策略处理：`reject` 返 `400003`，`rename` 追加 `(1)`、`(2)` 后缀，`overwrite` 直接替换（回收站未实现，替换不可恢复）。
 
 ### 8.5.5 文件夹上传与 URL 远程下载
 

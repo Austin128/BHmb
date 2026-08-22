@@ -1276,6 +1276,7 @@ POST /api/v1/auth/confirm         { "permission": "cluster:node:delete", "passwo
 
 | 方法与路径 | 说明 | 权限点 | 节点 | 幂等 | 确认 |
 | --- | --- | --- | --- | --- | --- |
+| `GET /file/roots` | 白名单根目录列表（前端目录树入口） | `file:file:list` | Y | — | |
 | `GET /file/list` | 目录列表，支持隐藏文件与排序 | `file:file:list` | Y | — | |
 | `GET /file/stat` | 单个文件或目录属性 | `file:file:read` | Y | — | |
 | `GET /file/content` | 读取文本内容，返回 ETag | `file:file:read` | Y | — | |
@@ -1285,32 +1286,33 @@ POST /api/v1/auth/confirm         { "permission": "cluster:node:delete", "passwo
 | `POST /file/rename` | 重命名 | `file:file:update` | Y | — | |
 | `POST /file/move` | 移动（可跨目录，支持覆盖策略） | `file:file:update` | Y | I | |
 | `POST /file/copy` | 复制 | `file:file:create` | Y | I | |
-| `DELETE /file/items` | 删除（默认进回收站） | `file:file:delete` | Y | — | C |
-| `PUT /file/permission` | 修改权限与属主，可递归 | `file:file:update` | Y | — | C |
-| `POST /file/compress` | 压缩为 zip/tar.gz/tar.zst | `file:file:exec` | Y | I | |
-| `POST /file/decompress` | 解压 | `file:file:exec` | Y | I | |
+| `DELETE /file/items` | 删除（当前为直接删除，回收站未实现） | `file:file:delete` | Y | — | C |
+| `PUT /file/permission` | 修改权限与属主，可递归 | `file:permission:update` | Y | — | C |
+| `POST /file/compress` | 压缩为 zip/tar.gz/tar（tar.zst 未实现） | `file:file:exec` | Y | I | |
+| `POST /file/decompress` | 解压（zip/tar/tar.gz/tar.bz2） | `file:file:exec` | Y | I | |
 | `GET /file/search` | 按名称、大小、时间、内容检索 | `file:file:list` | Y | — | |
 | `GET /file/du` | 目录占用统计 | `file:file:read` | Y | — | |
-| `POST /file/upload/init` | 初始化分片上传，返回 uploadId | `file:file:create` | Y | I | |
-| `POST /file/upload/chunk` | 上传单个分片 | `file:file:create` | Y | — | |
-| `POST /file/upload/complete` | 合并分片 | `file:file:create` | Y | — | |
-| `GET /file/upload/status` | 查询已上传分片，用于断点续传 | `file:file:read` | Y | — | |
-| `DELETE /file/upload/{uploadId}` | 放弃上传并清理临时分片 | `file:file:delete` | Y | — | |
+| `POST /file/upload` | 单文件整体上传（multipart，受 `file.max_upload_size` 限制） | `file:file:create` | Y | — | |
+| `POST /file/upload/init` | 初始化分片上传，返回 uploadId；命中同名同哈希文件时秒传 | `file:file:create` | Y | I | |
+| `POST /file/upload/chunk` | 上传单个分片（multipart，逐片校验和） | `file:file:create` | Y | — | |
+| `POST /file/upload/complete` | 合并分片并落地 | `file:file:create` | Y | — | |
+| `GET /file/upload/status` | 查询已上传/缺失分片，用于断点续传 | `file:file:create` | Y | — | |
+| `DELETE /file/upload/{uploadId}` | 放弃上传并清理临时分片（幂等） | `file:file:create` | Y | — | |
 | `GET /file/download` | 单文件下载，支持 Range | `file:file:read` | Y | — | |
-| `POST /file/download/archive` | 多选打包下载，返回 taskId | `file:file:export` | Y | I | |
-| `POST /file/remote-download` | 从 URL 下载到服务器 | `file:file:create` | Y | I | |
-| `GET /file/recycle` | 回收站列表 | `file:recycle:list` | Y | — | |
-| `POST /file/recycle/{id}/restore` | 还原 | `file:recycle:update` | Y | — | |
-| `DELETE /file/recycle/{id}` | 彻底删除单项 | `file:recycle:delete` | Y | — | C |
-| `DELETE /file/recycle` | 清空回收站 | `file:recycle:delete` | Y | — | C |
-| `GET /file/transfers` | 传输任务列表（上传、下载、压缩、远程拉取） | `file:transfer:list` | Y | — | |
-| `POST /file/transfers/{id}/cancel` | 取消传输任务 | `file:transfer:exec` | Y | — | |
-| `GET /file/shares` | 文件分享列表 | `file:share:list` | — | — | |
-| `POST /file/shares` | 创建分享链接（有效期、密码、下载次数） | `file:share:create` | Y | I | |
-| `DELETE /file/shares/{id}` | 撤销分享 | `file:share:delete` | — | — | |
-| `GET /public/share/{code}` | 匿名访问分享内容 | public | — | — | |
-| `GET /file/favorites` | 收藏目录列表 | `file:file:list` | — | — | |
-| `POST /file/favorites` | 添加收藏 | `file:file:create` | — | I | |
+| `POST /file/download/archive` | 多选打包下载，返回 taskId（未实现） | `file:file:export` | Y | I | |
+| `POST /file/remote-download` | 从 URL 下载到服务器（未实现） | `file:file:create` | Y | I | |
+| `GET /file/recycle` | 回收站列表（未实现） | `file:recycle:list` | Y | — | |
+| `POST /file/recycle/{id}/restore` | 还原（未实现） | `file:recycle:update` | Y | — | |
+| `DELETE /file/recycle/{id}` | 彻底删除单项（未实现） | `file:recycle:delete` | Y | — | C |
+| `DELETE /file/recycle` | 清空回收站（未实现） | `file:recycle:delete` | Y | — | C |
+| `GET /file/transfers` | 传输任务列表（上传、下载、压缩、远程拉取；未实现） | `file:transfer:list` | Y | — | |
+| `POST /file/transfers/{id}/cancel` | 取消传输任务（未实现） | `file:transfer:exec` | Y | — | |
+| `GET /file/shares` | 文件分享列表（未实现） | `file:share:list` | — | — | |
+| `POST /file/shares` | 创建分享链接（有效期、密码、下载次数；未实现） | `file:share:create` | Y | I | |
+| `DELETE /file/shares/{id}` | 撤销分享（未实现） | `file:share:delete` | — | — | |
+| `GET /public/share/{code}` | 匿名访问分享内容（未实现） | public | — | — | |
+| `GET /file/favorites` | 收藏目录列表（未实现） | `file:file:list` | — | — | |
+| `POST /file/favorites` | 添加收藏（未实现） | `file:file:create` | — | I | |
 | `GET /terminal/sessions` | 在线终端会话列表 | `terminal:session:list` | M | — | |
 | `POST /terminal/sessions` | 创建会话，返回 sessionId 与 ws ticket | `terminal:session:create` | Y | I | |
 | `DELETE /terminal/sessions/{id}` | 强制结束会话 | `terminal:session:delete` | — | — | |
@@ -1928,28 +1930,28 @@ Content-Type: application/json
 
 ```
 POST /api/v1/file/upload/init
-{ "path": "/opt/backup", "filename": "app-v3.tar.gz", "size": 1073741824, "chunkSize": 8388608, "hash": "sha256:9f2c...", "overwrite": "rename" }
-→ { "code": 0, "data": { "uploadId": "up_7f3a9c2b", "chunkSize": 8388608, "totalChunks": 128, "uploadedChunks": [], "expireAt": "2026-08-18T10:55:00+08:00", "quickUpload": false } }
+{ "path": "/opt/backup", "filename": "app-v3.tar.gz", "size": 1073741824, "chunkSize": 8388608, "hash": "sha256:9f2c...", "conflict": "rename" }
+→ { "code": 0, "data": { "uploadId": "up_7f3a9c2b1d4e5a60788b9c0d", "chunkSize": 8388608, "totalChunks": 128, "uploadedChunks": [], "expireAt": "2026-08-18T10:55:00+08:00", "quickUpload": false } }
 ```
 
-`hash` 为整文件哈希，服务端命中同哈希已存在文件时返回 `quickUpload: true` 并直接完成秒传。`overwrite` ∈ `reject`（默认，冲突返 `400003`）/`overwrite`/`rename`（自动加 `(1)` 后缀）。
+`hash` 为整文件 sha256（形如 `sha256:<hex>`），服务端在目标路径已存在同大小同哈希文件时返回 `quickUpload: true` 与 `entry`，直接完成秒传。`conflict` ∈ `reject`（默认，冲突返 `400003`）/`overwrite`/`rename`（自动加 `(1)` 后缀），与其余文件接口的冲突参数同名。`chunkSize` 未传取 8 MB，服务端会夹到 64 KB~64 MB，分片数上限 20000。`path`、`filename`、`size`、`chunkSize`、`conflict` 完全一致且未过期的会话会被复用：重复 `init` 返回同一个 `uploadId` 与已收分片，刷新页面后可继续断点续传。
 
 ```
 POST /api/v1/file/upload/chunk
 Content-Type: multipart/form-data
-uploadId=up_7f3a9c2b & index=17 & checksum=md5:3f9a... & chunk=<binary>
-→ { "code": 0, "data": { "index": 17, "received": 8388608, "uploadedCount": 18, "totalChunks": 128 } }
+uploadId=up_7f3a9c2b1d4e5a60788b9c0d & index=17 & checksum=md5:3f9a... & chunk=<binary>
+→ { "code": 0, "data": { "uploadId": "up_7f3a9c2b1d4e5a60788b9c0d", "index": 17, "received": 8388608, "uploadedCount": 18, "totalChunks": 128 } }
 ```
 
-分片可并发上传，默认建议并发 3；`checksum` 不匹配返回 `400006`，前端只重传该分片。
+分片可并发上传，默认建议并发 3；`checksum` 支持 `md5:<hex>` 与 `sha256:<hex>`，缺省则只校长度。校验和或长度不符返回 `400006`，前端只重传该分片。重传同一 `index` 幂等覆盖。
 
 ```
 POST /api/v1/file/upload/complete
-{ "uploadId": "up_7f3a9c2b" }
-→ { "code": 0, "data": { "path": "/opt/backup/app-v3.tar.gz", "size": 1073741824, "hash": "sha256:9f2c...", "durationMs": 96233 } }
+{ "uploadId": "up_7f3a9c2b1d4e5a60788b9c0d", "hash": "sha256:9f2c..." }
+→ { "code": 0, "data": { "entry": { "name": "app-v3.tar.gz", "path": "/opt/backup/app-v3.tar.gz", "size": 1073741824 }, "path": "/opt/backup/app-v3.tar.gz", "size": 1073741824, "hash": "sha256:9f2c...", "durationMs": 96233 } }
 ```
 
-合并阶段耗时较长，服务端立即返回 `202` 语义的 `data.taskId` 亦被允许（大于 2 GB 时自动切换为异步），前端统一按是否存在 `taskId` 决定是否订阅 `file.transfer.<taskId>`。缺片时返回 `400006` 并在 `data.missing` 列出索引。断点续传前调 `GET /file/upload/status?uploadId=up_7f3a9c2b` 拿 `uploadedChunks`。
+合并为同步操作，直接返回落地条目（`data.taskId` 异步合并与 `file.transfer.<taskId>` 订阅尚未实现）。缺片时返回 `400006` 并在 `data.missing` 列出索引；合并失败（缺片、整文件哈希不符）不会破坏会话，修正后可重试而无需重传全部分片。断点续传前调 `GET /file/upload/status?uploadId=up_7f3a9c2b1d4e5a60788b9c0d` 拿 `uploadedChunks` 与 `missingChunks`；`DELETE /file/upload/{uploadId}` 放弃会话并清理分片，会话已不存在时同样返回成功。会话有效期 24 小时，过期访问返回 `400007`，需重新 `init`。分片落在服务端自管的临时目录（`file.upload_temp_dir`），不写进用户目录，上传中断不会在站点目录留下垃圾。
 
 ### 5.8.5 容器创建与 Compose 部署
 
