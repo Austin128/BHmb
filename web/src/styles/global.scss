@@ -1,16 +1,44 @@
 /* 全局基线样式。深浅色统一走 Arco 的 CSS 变量（--color-*），
    自有变量以 --nova- 前缀，随 html[data-nova-theme] 切换。 */
 
+/* 品牌色：薄荷绿。「青垣」的青对应这套色板，覆盖 Arco 默认蓝的 primary 十档。
+   Arco 的 --primary-N 存的是 RGB 三元组，不是十六进制。 */
+:root {
+  --primary-1: 232, 251, 244;
+  --primary-2: 198, 245, 229;
+  --primary-3: 150, 234, 207;
+  --primary-4: 98, 221, 182;
+  --primary-5: 51, 206, 158;
+  --primary-6: 18, 184, 134;
+  --primary-7: 12, 155, 113;
+  --primary-8: 7, 126, 92;
+  --primary-9: 4, 97, 71;
+  --primary-10: 2, 69, 51;
+}
+
+body[arco-theme='dark'] {
+  --primary-1: 2, 69, 51;
+  --primary-2: 4, 97, 71;
+  --primary-3: 7, 126, 92;
+  --primary-4: 12, 155, 113;
+  --primary-5: 18, 184, 134;
+  --primary-6: 45, 199, 152;
+  --primary-7: 98, 221, 182;
+  --primary-8: 150, 234, 207;
+  --primary-9: 198, 245, 229;
+  --primary-10: 232, 251, 244;
+}
+
 :root {
   --nova-header-height: 60px;
   --nova-sider-width: 220px;
   --nova-radius: 6px;
-  --nova-login-bg: linear-gradient(135deg, #eef2ff 0%, #f7f8fa 60%, #e9f3ff 100%);
+  --nova-login-bg: linear-gradient(135deg, #e8fbf4 0%, #f7f8fa 60%, #dff5ee 100%);
   --nova-login-card-bg: rgba(255, 255, 255, 0.92);
 }
 
 html[data-nova-theme='dark'] {
-  --nova-login-bg: linear-gradient(135deg, #17171a 0%, #1d1d20 60%, #16222e 100%);
+  --nova-login-bg: linear-gradient(135deg, #17171a 0%, #1d1d20 60%, #16302a 100%);
   --nova-login-card-bg: rgba(35, 35, 38, 0.92);
 }
 
