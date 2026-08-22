@@ -192,6 +192,99 @@ if [[ -n "$ADMIN_PW" ]]; then
   fi
 fi
 
+step "校验 bh 诊断与信息命令"
+check_out="$(dexec 'bh check' 2>&1 || true)"
+for kw in "systemd 服务 active" "健康检查 200" "master.key 权限 600" "配置校验通过"; do
+  [[ "$check_out" == *"$kw"* ]] && t_pass "bh check 输出「${kw}」" ||
+    t_fail "bh check 缺少「${kw}」：$(printf '%s' "$check_out" | tr '\n' ' ' | head -c 200)"
+done
+dexec 'bh confcheck | grep -q 配置校验通过' && t_pass "bh confcheck 通过" || t_fail "bh confcheck 异常"
+dexec 'bh cert info | grep -q 有效期至' && t_pass "bh cert info 显示有效期" || t_fail "bh cert info 异常"
+dexec 'bh migrate status >/dev/null' &&
+  t_pass "bh migrate status 可用" || t_fail "bh migrate status 异常"
+
+step "校验 bh 账号与会话运维"
+dexec 'bh users | grep -q admin' && t_pass "bh users 列出 admin" || t_fail "bh users 未列出 admin"
+dexec 'bh unlock admin | grep -q 已解锁' && t_pass "bh unlock 可解锁账号" || t_fail "bh unlock 异常"
+dexec 'bh 2fa off admin >/dev/null' && t_pass "bh 2fa off 可执行" || t_fail "bh 2fa off 异常"
+dexec 'bh sessions | grep -q 用户ID' && t_pass "bh sessions 输出会话表头" || t_fail "bh sessions 异常"
+dexec 'bh kick admin | grep -q 已吊销' && t_pass "bh kick 吊销会话" || t_fail "bh kick 异常"
+
+# 锁定 → 解锁闭环：连续错误口令打到 login_fail_limit(5) 会锁号
+# 直接看 bh users 的锁定列，而不依赖登录错误码（将来加验证码会换成另一个码）
+for _ in 1 2 3 4 5 6; do
+  dexec "curl -sk -o /dev/null -X POST https://127.0.0.1:$PORT/api/v1/auth/login \
+    -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"wrong-pw\"}'" || true
+done
+locked_col="$(dexec "bh users | awk '\$2==\"admin\" {print \$5}'" | tr -d '[:space:]' || true)"
+if [[ -n "$locked_col" && "$locked_col" != "-" ]]; then
+  t_pass "连续失败后 bh users 锁定列为 $locked_col"
+else
+  t_fail "账号未锁定（锁定列=[${locked_col}]）"
+fi
+dexec 'bh unlock admin >/dev/null'
+unlocked_col="$(dexec "bh users | awk '\$2==\"admin\" {print \$5}'" | tr -d '[:space:]' || true)"
+if [[ "$unlocked_col" == "-" ]]; then
+  t_pass "bh unlock 后锁定列已清空"
+else
+  t_fail "bh unlock 后仍锁定（锁定列=[${unlocked_col}]）"
+fi
+
+step "校验 bh 配置类命令"
+# 批量改配置时用 NOVA_NO_RESTART=1，最后统一重启
+dexec 'NOVA_NO_RESTART=1 bh whitelist add 10.9.8.7 >/dev/null'
+dexec 'bh whitelist list | grep -q 10.9.8.7' && t_pass "bh whitelist add 写入生效" || t_fail "白名单未写入"
+dexec 'bh confcheck >/dev/null' && t_pass "写入白名单后配置仍合法" || t_fail "写入白名单后配置非法"
+dexec 'NOVA_NO_RESTART=1 bh whitelist del 10.9.8.7 >/dev/null'
+dexec 'bh whitelist list | grep -q 未设置' && t_pass "bh whitelist del 已移除" || t_fail "白名单未移除"
+
+dexec 'NOVA_NO_RESTART=1 bh loglevel debug >/dev/null'
+dexec "grep -A2 '^log:' /opt/novapanel/conf/panel.yaml | grep -q 'level: debug'" &&
+  t_pass "bh loglevel 改写生效" || t_fail "bh loglevel 未生效"
+dexec 'bh loglevel info >/dev/null'
+dexec 'systemctl is-active --quiet novapanel' && t_pass "改日志级别后服务仍 active" || t_fail "改日志级别后服务异常"
+
+# systemd 默认 10s 内只允许启动 5 次；连续改配置/重启不能把服务卡在 failed
+for _ in 1 2 3 4 5 6; do dexec 'bh restart >/dev/null 2>&1' || true; done
+dexec 'systemctl is-active --quiet novapanel' &&
+  t_pass "连续 6 次重启未被 systemd 限流卡住" ||
+  t_fail "连续重启后服务未运行：$(dexec 'systemctl is-active novapanel' || true)"
+
+dexec 'bh disable >/dev/null' && ! dexec 'systemctl is-enabled --quiet novapanel' &&
+  t_pass "bh disable 关闭开机自启" || t_fail "bh disable 未生效"
+dexec 'bh enable >/dev/null' && dexec 'systemctl is-enabled --quiet novapanel' &&
+  t_pass "bh enable 恢复开机自启" || t_fail "bh enable 未生效"
+
+dexec 'bh cleanlog 0 >/dev/null' && t_pass "bh cleanlog 可执行" || t_fail "bh cleanlog 异常"
+
+step "校验 bh 备份与恢复"
+backup_out="$(dexec 'bh backup' 2>&1 || true)"
+backup_file="$(printf '%s\n' "$backup_out" | sed $'s/\033\[[0-9;]*m//g' |
+  grep -oE '/opt/novapanel/backup/novapanel-backup-[0-9-]+\.tar\.gz' | head -1)"
+if [[ -n "$backup_file" ]] && dexec "test -s '$backup_file'"; then
+  t_pass "bh backup 生成备份包"
+else
+  t_fail "bh backup 未生成备份：$(printf '%s' "$backup_out" | tr '\n' ' ' | head -c 200)"
+fi
+dexec "test \"\$(stat -c '%a' '$backup_file')\" = 600" &&
+  t_pass "备份包权限 600（含主密钥）" || t_fail "备份包权限不安全"
+dexec "tar -tzf '$backup_file' | grep -q '^conf/panel.yaml'" &&
+  t_pass "备份包含配置文件" || t_fail "备份缺少配置文件"
+
+# 改一处配置再恢复，验证备份真的能覆盖回去
+dexec 'bh loglevel warn >/dev/null'
+dexec "bh restore '$backup_file' -y >/dev/null" && t_pass "bh restore 执行成功" || t_fail "bh restore 失败"
+dexec "grep -A2 '^log:' /opt/novapanel/conf/panel.yaml | grep -q 'level: info'" &&
+  t_pass "恢复后配置回到备份时状态" || t_fail "恢复后配置未回滚"
+dexec 'systemctl is-active --quiet novapanel' && t_pass "恢复后服务自动拉起" || t_fail "恢复后服务未运行"
+health_restore=""
+for _ in $(seq 1 15); do
+  health_restore="$(dexec "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:$PORT/api/v1/health" || true)"
+  [[ "$health_restore" == "200" ]] && break
+  sleep 1
+done
+[[ "$health_restore" == "200" ]] && t_pass "恢复后健康检查 200" || t_fail "恢复后健康检查 $health_restore"
+
 dexec 'bh port 8443 >/dev/null 2>&1' || true
 sleep 2
 health8443="$(dexec "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/v1/health" || true)"

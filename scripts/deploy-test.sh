@@ -94,12 +94,121 @@ else
   t_fail "两个脚本改写结果不一致"
 fi
 
+echo "== bh 配置改写（标量 / 嵌套 / 数组）=="
+
+cp "$ROOT/conf/panel.example.yaml" "$WORK/c.yaml"
+
+set_conf_scalar "$WORK/c.yaml" server host 127.0.0.1
+t_eq "server.host 被改写" "127.0.0.1" \
+  "$(awk '/^server:[[:space:]]*$/{i=1;next} i && $1=="host:"{print $2; exit}' "$WORK/c.yaml")"
+t_eq "kv.redis.addr 未被误改" "127.0.0.1:6379" \
+  "$(awk '/^kv:[[:space:]]*$/{i=1;next} i && $1=="addr:"{print $2; exit}' "$WORK/c.yaml")"
+
+set_conf_scalar "$WORK/c.yaml" log level debug
+t_eq "log.level 被改写" "debug" \
+  "$(awk '/^log:[[:space:]]*$/{i=1;next} i && $1=="level:"{print $2; exit}' "$WORK/c.yaml")"
+t_eq "database.log_level 未被误改" "warn" \
+  "$(awk '/^database:[[:space:]]*$/{i=1;next} i && $1=="log_level:"{print $2; exit}' "$WORK/c.yaml")"
+
+set_conf_scalar "$WORK/c.yaml" server entrance /nova_test
+t_eq "server.entrance 被改写" "/nova_test" \
+  "$(awk '/^server:[[:space:]]*$/{i=1;next} i && $1=="entrance:"{print $2; exit}' "$WORK/c.yaml")"
+
+set_conf_nested "$WORK/c.yaml" server tls enabled false
+t_eq "server.tls.enabled 被改写" "false" \
+  "$(awk '/^[[:space:]]*tls:[[:space:]]*$/{i=1;next} i && $1=="enabled:"{print $2; exit}' "$WORK/c.yaml")"
+t_eq "database.auto_migrate 未被误改" "true" \
+  "$(awk '/^database:[[:space:]]*$/{i=1;next} i && $1=="auto_migrate:"{print $2; exit}' "$WORK/c.yaml")"
+t_eq "改写后行数不变" "$(wc -l <"$ROOT/conf/panel.example.yaml")" "$(wc -l <"$WORK/c.yaml")"
+
+# 白名单是数组，行内 [] 与多行列表两种形态都要能读写
+CONF="$WORK/c.yaml"
+t_eq "空白名单读出为空" "" "$(whitelist_items)"
+write_whitelist "$CONF" "10.0.0.1 192.168.1.0/24"
+t_eq "写入两条后可读回" "10.0.0.1 192.168.1.0/24" "$(whitelist_items | tr '\n' ' ' | sed 's/ *$//')"
+t_eq "写入白名单不破坏后续键" "NovaPanel" \
+  "$(awk '/^security:[[:space:]]*$/{i=1;next} i && $1=="totp_issuer:"{print $2; exit}' "$CONF")"
+write_whitelist "$CONF" ""
+t_eq "清空后回到行内空数组" "" "$(whitelist_items)"
+t_contains "清空后写成 []" "$(grep 'ip_whitelist' "$CONF")" "ip_whitelist: []"
+
+cert_out="$(cert_files)"
+t_contains "cert_files 解析出证书路径" "$cert_out" "panel.crt"
+t_contains "cert_files 解析出私钥路径" "$cert_out" "panel.key"
+
+# 后续用例仍按原配置断言，这里恢复指向
+CONF="$NOVA_HOME/conf/panel.yaml"
+
+echo "== bh 备份包校验 =="
+
+# 正常包：曾因 pipefail 下 grep -q 早退让 tar 收到 SIGPIPE，正常备份被误判为损坏
+mkdir -p "$WORK/pkg/conf" "$WORK/pkg/data"
+cp "$ROOT/conf/panel.example.yaml" "$WORK/pkg/conf/panel.yaml"
+head -c 64 /dev/urandom >"$WORK/pkg/data/panel.db"
+tar -czf "$WORK/good.tar.gz" -C "$WORK/pkg" conf data
+if (check_backup "$WORK/good.tar.gz") >/dev/null 2>&1; then
+  t_pass "check_backup 接受正常备份包"
+else
+  t_fail "check_backup 误判正常备份包"
+fi
+
+printf 'not a tarball' >"$WORK/broken.tar.gz"
+if (check_backup "$WORK/broken.tar.gz") >/dev/null 2>&1; then
+  t_fail "check_backup 放过了损坏文件"
+else
+  t_pass "check_backup 拒绝损坏文件"
+fi
+
+mkdir -p "$WORK/nocfg/data"
+tar -czf "$WORK/nocfg.tar.gz" -C "$WORK/nocfg" data
+if (check_backup "$WORK/nocfg.tar.gz") >/dev/null 2>&1; then
+  t_fail "check_backup 放过了缺少 conf/ 的包"
+else
+  t_pass "check_backup 拒绝缺少 conf/ 的包"
+fi
+
+# 路径穿越：解包目标是 $NOVA_HOME，../ 条目会写到安装目录之外
+tar -czf "$WORK/evil.tar.gz" -C "$WORK/pkg" conf ../pkg/data 2>/dev/null ||
+  tar -czf "$WORK/evil.tar.gz" -C "$WORK" pkg/conf ../"$(basename "$WORK")"/pkg/data 2>/dev/null || true
+if [[ -f "$WORK/evil.tar.gz" ]] && tar -tzf "$WORK/evil.tar.gz" 2>/dev/null | grep -q '\.\.'; then
+  if (check_backup "$WORK/evil.tar.gz") >/dev/null 2>&1; then
+    t_fail "check_backup 放过了含 ../ 的包"
+  else
+    t_pass "check_backup 拒绝含 ../ 的包"
+  fi
+else
+  printf '  (当前 tar 不保留 ../ 条目，跳过路径穿越用例)\n'
+fi
+
 echo "== bh 帮助与子命令同步 =="
 
 help_text="$(cmd_help)"
-for sub in start stop restart reload status log logf info passwd port update uninstall version help; do
+for sub in start stop restart reload status enable disable log logf info check version \
+  cert confcheck passwd users unlock 2fa sessions kick whitelist ssl port host entrance \
+  conf loglevel cleanlog backup restore migrate update uninstall help; do
   t_contains "help 覆盖子命令 $sub" "$help_text" "bh $sub"
 done
+
+# help 里写了但 main 没接的命令等于骗人，反向也要查
+dispatch="$(sed -n '/^main() {/,/^}/p' "$ROOT/scripts/bh")"
+for sub in enable disable check users unlock 2fa sessions kick whitelist ssl host entrance \
+  confcheck loglevel cleanlog backup restore migrate cert; do
+  t_contains "main 分发含 $sub" "$dispatch" "$sub)"
+done
+
+# 交互菜单里列出的编号必须都有对应分支，否则选了没反应
+menu_body="$(sed -n '/^menu() {/,/^}/p' "$ROOT/scripts/bh")"
+menu_nums="$(printf '%s\n' "$menu_body" | grep -oE '^\s+\(([0-9]+)\)' | grep -oE '[0-9]+')"
+missing_case=""
+while read -r n; do
+  [[ -n "$n" ]] || continue
+  printf '%s\n' "$menu_body" | grep -qE "^[[:space:]]+${n}(\)| \|)" || missing_case="$missing_case $n"
+done <<<"$menu_nums"
+if [[ -z "$missing_case" ]]; then
+  t_pass "菜单编号都有对应分支（共 $(printf '%s\n' "$menu_nums" | grep -c . ) 项）"
+else
+  t_fail "菜单编号缺少分支：$missing_case"
+fi
 
 echo "== systemd 单元渲染 =="
 
@@ -136,7 +245,7 @@ echo "== 变量引用与中文标点 =="
 
 # bash 会把紧跟变量名的 UTF-8 字节当成变量名的一部分：
 # "$ARCH）" 会被解析成变量 ARCH）并触发 unbound variable，必须写成 "${ARCH}）"
-bad_refs="$(grep -nE '\$[A-Za-z_][A-Za-z0-9_]*(）|（|，|。|、|：|；)' \
+bad_refs="$(grep -nE '\$[A-Za-z_][A-Za-z0-9_]*(）|（|，|。|、|：|；|」|「|【|】|“|”)' \
   "$ROOT"/scripts/bh "$ROOT"/scripts/*.sh | grep -vE ':[0-9]+:[[:space:]]*#' || true)"
 if [[ -z "$bad_refs" ]]; then
   t_pass "没有变量名直接紧跟全角标点的写法"
