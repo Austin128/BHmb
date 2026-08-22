@@ -4,12 +4,14 @@
 #
 #   ./scripts/install-verify.sh            # 自动 make release 取包
 #   NOVA_PKG=dist/xxx.tar.gz ./scripts/install-verify.sh
+#   NOVA_VERIFY_PLATFORM=linux/amd64 ./scripts/install-verify.sh   # 模拟 CI runner 的架构
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE_IMAGE="${NOVA_VERIFY_BASE_IMAGE:-debian:12}"
 IMAGE="${NOVA_VERIFY_IMAGE:-novapanel-systemd-test:debian12}"
 CONTAINER="${NOVA_VERIFY_CONTAINER:-nova-install-verify}"
+BUILD_CONTAINER="${CONTAINER}-build"
 PORT=34567
 
 PASS=0
@@ -25,7 +27,7 @@ t_fail() {
 step() { printf '\033[36m==>\033[0m %s\n' "$1"; }
 dexec() { docker exec "$CONTAINER" bash -lc "$1"; }
 
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$CONTAINER" "$BUILD_CONTAINER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 command -v docker >/dev/null || {
@@ -37,7 +39,16 @@ docker info >/dev/null 2>&1 || {
   exit 1
 }
 
-ARCH="$(docker version --format '{{.Server.Arch}}')"
+# 默认跟随本机 Docker 架构；显式指定 NOVA_VERIFY_PLATFORM 可在 arm64 机器上模拟 amd64 runner
+PLATFORM="${NOVA_VERIFY_PLATFORM:-}"
+if [[ -n "$PLATFORM" ]]; then
+  ARCH="${PLATFORM#*/}"
+  IMAGE="${IMAGE}-${ARCH}"
+  DOCKER_PLATFORM_ARGS=(--platform "$PLATFORM")
+else
+  ARCH="$(docker version --format '{{.Server.Arch}}')"
+  DOCKER_PLATFORM_ARGS=()
+fi
 PKG="${NOVA_PKG:-}"
 if [[ -z "$PKG" ]]; then
   PKG="$(ls "$ROOT"/dist/novapanel-*-linux-"$ARCH".tar.gz 2>/dev/null | head -1 || true)"
@@ -53,7 +64,8 @@ step "使用发布包 $(basename "$PKG")"
 # 注意：故意不装 curl，用来验证 install.sh 的依赖自动安装分支
 if [[ "${NOVA_VERIFY_REBUILD:-0}" == "1" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   step "构建验证镜像 ${IMAGE}（基于 ${BASE_IMAGE}）"
-  docker build -t "$IMAGE" - >/dev/null <<EOF
+  if [[ -z "$PLATFORM" ]]; then
+    docker build -t "$IMAGE" - >/dev/null <<EOF
 FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \\
@@ -62,11 +74,23 @@ RUN apt-get update -qq \\
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 EOF
+  else
+    # legacy builder 会忽略 --platform（本机 docker 未装 buildx），改用 pull → run → commit
+    docker pull -q --platform "$PLATFORM" "$BASE_IMAGE" >/dev/null
+    docker rm -f "$BUILD_CONTAINER" >/dev/null 2>&1 || true
+    docker run --platform "$PLATFORM" --name "$BUILD_CONTAINER" -e DEBIAN_FRONTEND=noninteractive \
+      "$BASE_IMAGE" bash -c 'apt-get update -qq &&
+        apt-get install -y -qq --no-install-recommends systemd systemd-sysv dbus procps &&
+        rm -rf /var/lib/apt/lists/*' >/dev/null
+    docker commit --change 'STOPSIGNAL SIGRTMIN+3' --change 'CMD ["/sbin/init"]' \
+      "$BUILD_CONTAINER" "$IMAGE" >/dev/null
+    docker rm -f "$BUILD_CONTAINER" >/dev/null
+  fi
 fi
 
 step "启动 systemd 容器（$IMAGE, ${ARCH}）"
 cleanup
-docker run -d --name "$CONTAINER" --privileged --cgroupns=host \
+docker run -d --name "$CONTAINER" ${DOCKER_PLATFORM_ARGS[@]+"${DOCKER_PLATFORM_ARGS[@]}"} --privileged --cgroupns=host \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   "$IMAGE" >/dev/null
 
