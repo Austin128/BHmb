@@ -3,9 +3,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -77,8 +80,9 @@ func usage() {
   migrate down [-step N]  回滚最近 N 个迁移（默认 1）
   migrate status          列出迁移状态
   seed                    幂等写入角色与权限种子数据
-  passwd -u <用户名>      重置用户口令（不传 -p 时生成随机口令）
+  passwd -u <用户名>      重置用户口令（不传 -p 时生成随机口令，-p - 从标准输入读）
   user list               列出账号、状态、二次验证与最近登录
+  user rename -u <名> <新名>  修改用户名，并吊销该账号会话
   user unlock -u <用户名> 解除登录失败锁定并清零失败计数
   user 2fa off -u <名>    关闭该账号的二次验证
   session list [-u <名>]  列出最近 100 个会话
@@ -198,12 +202,20 @@ func cmdPasswd(args []string) error {
 	fs := flag.NewFlagSet("passwd", flag.ContinueOnError)
 	configPath := fs.String("c", defaultConfigPath, "配置文件路径")
 	username := fs.String("u", "", "用户名")
-	password := fs.String("p", "", "新口令，留空则生成随机口令")
+	password := fs.String("p", "", "新口令，留空则生成随机口令，传 - 则从标准输入读一行")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if *username == "" {
-		return errs.New(errs.CodeInvalidParam, "用法：novactl passwd -u <用户名> [-p <口令>]")
+		return errs.New(errs.CodeInvalidParam, "用法：novactl passwd -u <用户名> [-p <口令>|-p -]")
+	}
+	// 命令行上的口令会进 ps 输出与 shell 历史，交互场景应改走标准输入
+	if *password == "-" {
+		line, err := readPasswordLine()
+		if err != nil {
+			return err
+		}
+		*password = line
 	}
 
 	cfg, db, closeDB, err := openDB(*configPath)
@@ -242,6 +254,19 @@ func cmdPasswd(args []string) error {
 		fmt.Printf("新口令：%s\n", newPassword)
 	}
 	return nil
+}
+
+// readPasswordLine 从标准输入读一行口令，去掉行尾换行但保留其余字符（口令可含空格）。
+func readPasswordLine() (string, error) {
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", errs.Wrap(err, errs.CodeInvalidParam, "读取标准输入口令失败")
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" {
+		return "", errs.New(errs.CodeInvalidParam, "标准输入未提供口令")
+	}
+	return line, nil
 }
 
 func cmdConfig(args []string) error {

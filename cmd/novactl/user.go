@@ -14,9 +14,10 @@ import (
 	"github.com/novapanel/novapanel/internal/pkg/errs"
 	"github.com/novapanel/novapanel/internal/rbac"
 	"github.com/novapanel/novapanel/internal/repository"
+	"github.com/novapanel/novapanel/internal/security"
 )
 
-// cmdUser 处理账号运维：list / unlock / 2fa off。
+// cmdUser 处理账号运维：list / rename / unlock / 2fa off。
 // 这些操作直接改库，面板进程无需停机；已签发的 accessToken 最长在其 TTL 内仍有效。
 func cmdUser(args []string) error {
 	fs := flag.NewFlagSet("user", flag.ContinueOnError)
@@ -28,7 +29,7 @@ func cmdUser(args []string) error {
 
 	action := fs.Arg(0)
 	if action == "" {
-		return errs.New(errs.CodeInvalidParam, "用法：novactl user list|unlock|2fa off -u <用户名>")
+		return errs.New(errs.CodeInvalidParam, "用法：novactl user list|rename|unlock|2fa off -u <用户名>")
 	}
 
 	_, db, closeDB, err := openDB(*configPath)
@@ -41,6 +42,8 @@ func cmdUser(args []string) error {
 	switch action {
 	case "list":
 		return userList(ctx, db)
+	case "rename":
+		return userRename(ctx, db, *username, fs.Arg(1))
 	case "unlock":
 		return userUnlock(ctx, db, *username)
 	case "2fa":
@@ -75,6 +78,69 @@ func userList(ctx context.Context, db *gorm.DB) error {
 			u.ID, u.Username, u.Status, boolText(u.TwoFactorEnabled), locked, last, dashIfEmpty(u.LastLoginIP))
 	}
 	return w.Flush()
+}
+
+// userRename 改用户名。唯一索引是 (tenant_id, username, deleted_at)，
+// 因此这里既要挡住同名活跃账号，也要挡住只有大小写差异的名字（各数据库大小写敏感性不一致）。
+// 改名后吊销该账号会话：登录凭据里带的是用户名，旧会话继续用会话语义混乱。
+func userRename(ctx context.Context, db *gorm.DB, username, newName string) error {
+	if newName == "" {
+		return errs.New(errs.CodeInvalidParam, "用法：novactl user rename -u <原用户名> <新用户名>")
+	}
+	u, err := findUser(ctx, db, username)
+	if err != nil {
+		return err
+	}
+	if u.Username == newName {
+		return errs.Newf(errs.CodeInvalidParam, "新用户名与原用户名相同：%s", newName)
+	}
+	// 登录按大小写不敏感匹配，这类改名在 SQLite 下会真的改掉、在 MySQL ci 排序下等于没改，
+	// 两种结果都会让运维困惑，因此直接拒绝。
+	if security.SameUsername(u.Username, newName) {
+		return errs.Newf(errs.CodeInvalidParam,
+			"新用户名 %s 与当前用户名仅大小写不同，登录不区分大小写，改名无效", newName)
+	}
+	if err := security.CheckUsername(newName); err != nil {
+		return err
+	}
+
+	var existing []model.SysUser
+	if err := db.WithContext(ctx).
+		Where("tenant_id = ?", u.TenantID).
+		Find(&existing).Error; err != nil {
+		return errs.Wrap(err, errs.CodeInternal, "用户查询失败")
+	}
+	for i := range existing {
+		if existing[i].ID != u.ID && security.SameUsername(existing[i].Username, newName) {
+			return errs.Newf(errs.CodeConflict, "用户名 %s 已被占用", existing[i].Username)
+		}
+	}
+
+	now := time.Now().UTC()
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.SysUser{}).Where("id = ?", u.ID).
+			Updates(map[string]any{"username": newName, "updated_at": now}).Error; err != nil {
+			return errs.Wrap(err, errs.CodeInternal, "改名失败")
+		}
+		res := tx.Model(&model.SysSession{}).
+			Where("user_id = ? AND status = ?", u.ID, model.SessionStatusActive).
+			Updates(map[string]any{
+				"status":        model.SessionStatusRevoked,
+				"revoke_reason": model.RevokeReasonAdminRevoke,
+				"updated_at":    now,
+			})
+		if res.Error != nil {
+			return errs.Wrap(res.Error, errs.CodeInternal, "改名后吊销会话失败")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("用户 %s 已改名为 %s，该账号会话已吊销，请用新用户名重新登录\n", username, newName)
+	fmt.Println("提示：口令、角色与二次验证绑定都保持不变")
+	return nil
 }
 
 // userUnlock 清掉锁定期与失败计数，状态为 locked 的账号一并恢复为 active。

@@ -52,11 +52,21 @@ fi
 PKG="${NOVA_PKG:-}"
 if [[ -z "$PKG" ]]; then
   PKG="$(ls "$ROOT"/dist/novapanel-*-linux-"$ARCH".tar.gz 2>/dev/null | head -1 || true)"
+  # dist 里的包可能是上一轮构建的。只要有源码比它新就必须重建，
+  # 否则演练验证的是旧二进制与旧 bh，改动明明生效也会判成失败。
+  if [[ -n "$PKG" && -f "$PKG" ]]; then
+    stale="$(find "$ROOT/cmd" "$ROOT/internal" "$ROOT/scripts" "$ROOT/migrations" "$ROOT/web/src" \
+      -type f -newer "$PKG" -print -quit 2>/dev/null || true)"
+    if [[ -n "$stale" ]]; then
+      step "发布包早于源码（$(basename "$stale") 更新），重新构建"
+      PKG=""
+    fi
+  fi
 fi
 if [[ -z "$PKG" || ! -f "$PKG" ]]; then
-  step "未找到 linux-$ARCH 发布包，执行 make release"
+  step "构建 linux-$ARCH 发布包（make release）"
   (cd "$ROOT" && make release >/dev/null)
-  PKG="$(ls "$ROOT"/dist/novapanel-*-linux-"$ARCH".tar.gz | head -1)"
+  PKG="$(ls -t "$ROOT"/dist/novapanel-*-linux-"$ARCH".tar.gz | head -1)"
 fi
 step "使用发布包 $(basename "$PKG")"
 
@@ -244,6 +254,58 @@ else
   t_fail "bh unlock 后仍锁定（锁定列=[${unlocked_col}]）"
 fi
 
+# 自定义口令：--set 从标准输入连读两行，管道即可驱动，口令不出现在命令行上
+setpw='Qingyuan-Set!7x'
+if dexec "printf '%s\n%s\n' '$setpw' '$setpw' | bh passwd admin --set 2>&1 | grep -q 口令已重置"; then
+  t_pass "bh passwd --set 接受自定义口令"
+else
+  t_fail "bh passwd --set 未能设置自定义口令"
+fi
+if dexec "curl -sk -X POST https://127.0.0.1:$PORT/api/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"$setpw\"}' | grep -q accessToken"; then
+  t_pass "自定义口令可登录"
+else
+  t_fail "自定义口令无法登录"
+fi
+# 两次输入不一致必须拒绝，且不改动现有口令
+if dexec "printf 'Aaa-111!bbb\nBbb-222!ccc\n' | bh passwd admin --set 2>&1 | grep -q 不一致"; then
+  t_pass "两次输入不一致时拒绝改口令"
+else
+  t_fail "两次输入不一致未被拒绝"
+fi
+# 弱口令必须被 novactl 的强度策略挡住
+if dexec "printf 'password\npassword\n' | bh passwd admin --set 2>&1 | grep -qE '110001|密码'"; then
+  t_pass "弱口令被强度策略拒绝"
+else
+  t_fail "弱口令未被拒绝"
+fi
+
+# 改用户名：新名可登录、旧名查不到，最后改回 admin 供后续断言使用
+if dexec 'bh rename admin ops.admin | grep -q 已改名为'; then
+  t_pass "bh rename 改名成功"
+else
+  t_fail "bh rename 改名失败"
+fi
+dexec 'bh users | grep -q ops.admin' && t_pass "bh users 显示新用户名" || t_fail "改名后 bh users 未显示新名"
+if dexec "curl -sk -X POST https://127.0.0.1:$PORT/api/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{\"username\":\"ops.admin\",\"password\":\"$setpw\"}' | grep -q accessToken"; then
+  t_pass "新用户名可登录（口令不变）"
+else
+  t_fail "新用户名无法登录"
+fi
+if dexec "curl -sk -X POST https://127.0.0.1:$PORT/api/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"$setpw\"}' | grep -q 110004"; then
+  t_pass "旧用户名登录返回 110004"
+else
+  t_fail "旧用户名仍可登录"
+fi
+dexec 'bh rename ops.admin admin >/dev/null' && t_pass "可改回原用户名" || t_fail "改回原用户名失败"
+# 非法与重名必须被挡住
+dexec 'bh rename admin 1bad 2>&1 | grep -q 字母开头' &&
+  t_pass "非法用户名被拒绝" || t_fail "非法用户名未被拒绝"
+dexec 'bh rename admin Admin 2>&1 | grep -q 仅大小写不同' &&
+  t_pass "仅大小写不同的用户名被拒绝" || t_fail "大小写重名未被拒绝"
+
 step "校验 bh 配置类命令"
 # 批量改配置时用 NOVA_NO_RESTART=1，最后统一重启
 dexec 'NOVA_NO_RESTART=1 bh whitelist add 10.9.8.7 >/dev/null'
@@ -305,6 +367,38 @@ health8443="$(dexec "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8
 [[ "$health8443" == "200" ]] && t_pass "bh port 改端口后 8443 可用" || t_fail "改端口后 8443 返回 $health8443"
 
 step "校验升级与卸载"
+
+# bh update 必须先比版本再动手。这里只用显式版本参数，不触发真实联网升级
+cur_ver="$(dexec "bh version" 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+if [[ -n "$cur_ver" ]]; then
+  same_log="$(dexec "bh update $cur_ver 2>&1" || true)"
+  if grep -q 已是最新版本 <<<"$same_log"; then
+    t_pass "bh update 同版本时不重装"
+  else
+    t_fail "bh update 同版本仍尝试重装：$(tr '\n' ' ' <<<"$same_log" | tail -c 200)"
+  fi
+
+  # 降级目标必须确实比当前版本低，否则会被判成同版本；由当前版本推导而非写死
+  older="$(awk -F. -v v="${cur_ver#v}" 'BEGIN{
+    split(v, p, ".")
+    if (p[1] + 0 > 0) { printf "%d.%d.%d", p[1] - 1, p[2], p[3] }
+    else if (p[2] + 0 > 0) { printf "%d.%d.%d", p[1], p[2] - 1, p[3] }
+    else if (p[3] + 0 > 0) { printf "%d.%d.%d", p[1], p[2], p[3] - 1 }
+  }')"
+  if [[ -z "$older" ]]; then
+    t_fail "当前版本 $cur_ver 已是 0.0.0，无法构造降级用例"
+  else
+    down_log="$(dexec "bh update v$older 2>&1" || true)"
+    if grep -q 不自动降级 <<<"$down_log"; then
+      t_pass "bh update 拒绝自动降级（${cur_ver} → v${older}）"
+    else
+      t_fail "bh update 未拒绝降级：$(tr '\n' ' ' <<<"$down_log" | tail -c 200)"
+    fi
+  fi
+else
+  t_fail "无法解析 bh version 输出的版本号"
+fi
+
 upgrade_log="$(dexec 'NOVA_PKG=/tmp/pkg.tar.gz bash /tmp/nova/scripts/install.sh' 2>&1 || true)"
 [[ "$upgrade_log" == *"检测到已有安装"* ]] && t_pass "重复安装识别为升级" || t_fail "重复安装未走升级分支"
 dexec "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/v1/health" |

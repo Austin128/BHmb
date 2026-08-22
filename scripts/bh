@@ -130,8 +130,63 @@ cmd_info() {
 cmd_passwd() {
   need_root passwd
   need_install
-  local user="${1:-admin}"
-  "$CLI" passwd -u "$user" -c "$CONF"
+  local user="admin" mode=""
+  # 解析参数：bh passwd [用户名] [--random|--set]
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --random) mode="random" ;;
+      --set | --ask) mode="set" ;;
+      -h | --help) die "用法：bh passwd [用户名] [--random|--set]（默认交互询问，无终端时生成随机口令）" ;;
+      *) user="$1" ;;
+    esac
+    shift
+  done
+
+  # 没显式指定方式时：有终端就问，无终端（CI、管道调用）保持随机口令的老行为
+  if [[ -z "$mode" ]]; then
+    if [[ -t 0 ]]; then mode="ask"; else mode="random"; fi
+  fi
+
+  if [[ "$mode" == "random" ]]; then
+    "$CLI" passwd -u "$user" -c "$CONF"
+    return
+  fi
+
+  local pw1 pw2
+  if [[ "$mode" == "ask" ]]; then
+    info "为账号 ${user} 设置新口令（直接回车则生成随机口令）"
+  fi
+  read -r -s -p "新口令：" pw1 && echo
+  if [[ -z "$pw1" ]]; then
+    if [[ "$mode" == "set" ]]; then die "口令不能为空"; fi
+    "$CLI" passwd -u "$user" -c "$CONF"
+    return
+  fi
+  read -r -s -p "再输入一次：" pw2 && echo
+  [[ "$pw1" == "$pw2" ]] || die "两次输入的口令不一致，未做修改"
+
+  # 口令走标准输入，避免出现在 ps 输出与 shell 历史里
+  printf '%s\n' "$pw1" | "$CLI" passwd -u "$user" -p - -c "$CONF"
+  warn "该账号的登录令牌已失效，需用新口令重新登录"
+}
+
+# 改用户名：会话会被吊销，口令、角色与 2FA 绑定不变
+cmd_rename() {
+  need_root rename
+  need_install
+  local user="${1:-}" newname="${2:-}"
+  if [[ -z "$user" || -z "$newname" ]]; then
+    if [[ ! -t 0 ]]; then
+      die "用法：bh rename <原用户名> <新用户名>"
+    fi
+    "$CLI" user list -c "$CONF" || true
+    [[ -n "$user" ]] || read -r -p "原用户名（回车默认 admin）：" user
+    user="${user:-admin}"
+    [[ -n "$newname" ]] || read -r -p "新用户名：" newname
+  fi
+  [[ -n "$newname" ]] || die "新用户名不能为空"
+
+  "$CLI" user rename -u "$user" "$newname" -c "$CONF"
 }
 
 # 只改 server 段的第一处 port，避开 agent.grpc_port / redis 等其它段
@@ -357,15 +412,107 @@ cmd_whitelist() {
   esac
 }
 
+# 取本地已安装版本，形如 v0.2.2；解析不出来返回空字符串
+installed_version() {
+  local out=""
+  [[ -x "$PANEL" ]] && out="$("$PANEL" -version 2>/dev/null || true)"
+  [[ -n "$out" ]] || out="$("$CLI" version 2>/dev/null || true)"
+  printf '%s' "$out" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?' | head -1
+}
+
+# 最新发布 tag：优先 releases/latest 的 302 重定向，api.github.com 对匿名请求限流很紧，只当兜底
+latest_release_tag() {
+  local loc="" tag=""
+  if command -v curl >/dev/null 2>&1; then
+    loc="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+      "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+  elif command -v wget >/dev/null 2>&1; then
+    loc="$(wget -S --spider -O /dev/null "https://github.com/${REPO}/releases/latest" 2>&1 |
+      awk '/[Ll]ocation:/ {print $2}' | tail -1 || true)"
+  fi
+  if [[ "$loc" == *"/releases/tag/"* ]]; then
+    tag="${loc##*/releases/tag/}"
+    tag="${tag%%[!A-Za-z0-9._-]*}"
+  fi
+  if [[ -z "$tag" ]] && command -v curl >/dev/null 2>&1; then
+    tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null |
+      grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)"
+  fi
+  printf '%s' "$tag"
+}
+
+# 语义化版本比较，只看 major.minor.patch：0=相等，1=$1 更新，2=$2 更新。
+# 自己拆着比而不用 sort -V：BusyBox 的 sort 没有 -V，装在精简系统上会直接失败。
+version_cmp() {
+  local a="${1#v}" b="${2#v}" i x y
+  a="${a%%[-+]*}"
+  b="${b%%[-+]*}"
+  local -a pa=() pb=()
+  IFS=. read -r -a pa <<<"$a"
+  IFS=. read -r -a pb <<<"$b"
+  for i in 0 1 2; do
+    x="${pa[i]:-0}"
+    y="${pb[i]:-0}"
+    x="${x//[!0-9]/}"
+    y="${y//[!0-9]/}"
+    ((10#${x:-0} > 10#${y:-0})) && return 1
+    ((10#${x:-0} < 10#${y:-0})) && return 2
+  done
+  return 0
+}
+
 cmd_update() {
   need_root update
   need_install
+  local force=0 want=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f | --force) force=1 ;;
+      -h | --help) die "用法：bh update [版本号] [--force]（默认先比对版本号，已是最新则不重装）" ;;
+      *) want="$1" ;;
+    esac
+    shift
+  done
+
   local installer="$NOVA_HOME/scripts/install.sh"
-  if [[ -x "$installer" ]]; then
-    NOVA_HOME="$NOVA_HOME" NOVA_UPGRADE=1 "$installer"
+  [[ -x "$installer" ]] || die "未找到 ${installer}，请重新执行一键安装命令完成升级"
+
+  local cur target=""
+  cur="$(installed_version)"
+  info "当前版本：${cur:-未知}"
+
+  if [[ -n "$want" ]]; then
+    target="$want"
+    info "目标版本：$target"
   else
-    die "未找到 ${installer}，请重新执行一键安装命令完成升级"
+    target="$(latest_release_tag)"
+    if [[ -z "$target" ]]; then
+      warn "无法获取最新版本号（网络不通或 GitHub 限流）"
+      ((force == 1)) || die "已中止；确认仍要重新安装请执行 bh update --force"
+    else
+      info "最新版本：$target"
+    fi
   fi
+
+  # 版本可比时先判断有没有必要动手：重装会重启服务，没新版就不该打扰线上
+  if ((force == 0)) && [[ -n "$cur" && -n "$target" ]]; then
+    local rc=0
+    version_cmp "$cur" "$target" || rc=$?
+    case "$rc" in
+      0)
+        ok "已是最新版本 ${cur}，无需升级（要强制重装执行 bh update --force）"
+        return 0
+        ;;
+      1)
+        warn "本地版本 ${cur} 比发布版 ${target} 更新（可能装的是预发布或自建包），不自动降级"
+        info "确实要装成 ${target} 请执行：bh update ${target} --force"
+        return 0
+        ;;
+      *) info "发现新版本：${cur} → ${target}" ;;
+    esac
+  fi
+
+  NOVA_HOME="$NOVA_HOME" NOVA_UPGRADE=1 NOVA_VERSION="$target" "$installer"
 }
 
 cmd_uninstall() {
@@ -717,7 +864,8 @@ bh —— 青垣面板管理命令（不带参数进入交互菜单）
   bh confcheck                         校验配置文件
 
 账号与安全
-  bh passwd [用户]                     重置口令（默认 admin，随机生成并只打印一次）
+  bh passwd [用户] [--random]           修改口令（默认 admin，终端下交互输入，--random 直接生成）
+  bh rename <原用户名> <新用户名>       修改用户名（会吊销该账号会话）
   bh users                             列出账号、状态、二次验证与最近登录
   bh unlock [用户]                     解除登录失败锁定并清零失败计数
   bh 2fa off [用户]                    关闭该账号的二次验证
@@ -754,7 +902,7 @@ menu() {
     fi
     printf '端口：%s   协议：%s   目录：%s\n' "$(panel_port)" "$(panel_scheme)" "$NOVA_HOME"
     cat <<'EOF'
-  (1)  启动面板                  (11) 重置 admin 口令
+  (1)  启动面板                  (11) 修改账号口令
   (2)  停止面板                  (12) 账号列表
   (3)  重启面板                  (13) 解除账号锁定
   (4)  重载配置                  (14) 关闭二次验证
@@ -769,7 +917,7 @@ menu() {
   (23) 修改日志级别              (28) 升级面板
   (24) 清理日志                  (29) 卸载面板
   (25) 证书信息                  (30) 数据库迁移
-  (0)  退出
+  (31) 修改用户名                (0)  退出
 EOF
     read -r -p "请输入命令编号：" choice
     case "$choice" in
@@ -786,7 +934,10 @@ EOF
         read -r -p "开机自启 on/off：" arg
         if [[ "$arg" == "on" ]]; then cmd_enable; else cmd_disable; fi
         ;;
-      11) cmd_passwd admin ;;
+      11)
+        read -r -p "用户名（回车默认 admin）：" arg
+        cmd_passwd "${arg:-admin}"
+        ;;
       12) cmd_users ;;
       13)
         read -r -p "用户名（回车默认 admin）：" arg
@@ -853,6 +1004,12 @@ EOF
         read -r -p "动作 status/up（回车默认 status）：" arg
         cmd_migrate "${arg:-status}"
         ;;
+      31)
+        cmd_users || true
+        read -r -p "原用户名（回车默认 admin）：" arg
+        read -r -p "新用户名：" arg2
+        cmd_rename "${arg:-admin}" "$arg2"
+        ;;
       0 | q | Q) exit 0 ;;
       h | help) cmd_help ;;
       *) warn "无效选项：$choice" ;;
@@ -880,6 +1037,7 @@ main() {
     info) cmd_info ;;
     check | doctor) cmd_check ;;
     passwd) cmd_passwd "$@" ;;
+    rename) cmd_rename "$@" ;;
     users) cmd_users ;;
     unlock) cmd_unlock "$@" ;;
     2fa) cmd_2fa "$@" ;;
@@ -898,7 +1056,7 @@ main() {
     restore) cmd_restore "$@" ;;
     migrate) cmd_migrate "$@" ;;
     cert) cmd_cert "$@" ;;
-    update | upgrade) cmd_update ;;
+    update | upgrade) cmd_update "$@" ;;
     uninstall) cmd_uninstall "$@" ;;
     version | -v | --version) cmd_version ;;
     help | -h | --help) cmd_help ;;

@@ -184,14 +184,14 @@ echo "== bh 帮助与子命令同步 =="
 
 help_text="$(cmd_help)"
 for sub in start stop restart reload status enable disable log logf info check version \
-  cert confcheck passwd users unlock 2fa sessions kick whitelist ssl port host entrance \
+  cert confcheck passwd rename users unlock 2fa sessions kick whitelist ssl port host entrance \
   conf loglevel cleanlog backup restore migrate update uninstall help; do
   t_contains "help 覆盖子命令 $sub" "$help_text" "bh $sub"
 done
 
 # help 里写了但 main 没接的命令等于骗人，反向也要查
 dispatch="$(sed -n '/^main() {/,/^}/p' "$ROOT/scripts/bh")"
-for sub in enable disable check users unlock 2fa sessions kick whitelist ssl host entrance \
+for sub in enable disable check users rename unlock 2fa sessions kick whitelist ssl host entrance \
   confcheck loglevel cleanlog backup restore migrate cert; do
   t_contains "main 分发含 $sub" "$dispatch" "$sub)"
 done
@@ -271,6 +271,75 @@ else
   t_pass "健康探测不因 activating 提前退出"
 fi
 t_contains "演练脚本等待服务就绪" "$(cat "$ROOT/scripts/install-verify.sh")" "wait_health"
+
+echo "== 账号口令与改名 =="
+
+# 交互输入的口令必须经管道喂给 novactl：写在命令行上会进 ps 输出与 shell 历史
+passwd_body="$(sed -n '/^cmd_passwd() {/,/^}/p' "$ROOT/scripts/bh")"
+t_contains "口令走标准输入" "$passwd_body" 'printf '"'"'%s\n'"'"' "$pw1" | "$CLI" passwd -u "$user" -p - -c "$CONF"'
+t_contains "两次输入要一致" "$passwd_body" '[[ "$pw1" == "$pw2" ]]'
+t_contains "读口令不回显" "$passwd_body" 'read -r -s -p'
+t_contains "无终端时保持随机口令" "$passwd_body" 'if [[ -t 0 ]]; then mode="ask"; else mode="random"; fi'
+if printf '%s\n' "$passwd_body" | grep -qE '\-p "\$pw'; then
+  t_fail "口令仍以命令行参数传递"
+else
+  t_pass "口令未以命令行参数传递"
+fi
+
+rename_body="$(sed -n '/^cmd_rename() {/,/^}/p' "$ROOT/scripts/bh")"
+t_contains "改名调用 novactl user rename" "$rename_body" '"$CLI" user rename -u "$user" "$newname" -c "$CONF"'
+t_contains "非交互缺参数时报用法" "$rename_body" "用法：bh rename <原用户名> <新用户名>"
+
+# novactl 侧：-p - 表示从标准输入读，rename 有独立动作
+novactl_main="$(cat "$ROOT/cmd/novactl/main.go")"
+t_contains "novactl 支持 -p - 读标准输入" "$novactl_main" 'if *password == "-"'
+t_contains "novactl usage 写明 rename" "$novactl_main" "user rename"
+t_contains "novactl 分发 rename" "$(cat "$ROOT/cmd/novactl/user.go")" 'case "rename":'
+
+echo "== 升级前的版本比对 =="
+
+# version_cmp：0=相等 1=前者更新 2=后者更新；tag 带不带 v、带不带预发布后缀都要能比
+vc() {
+  local rc=0
+  version_cmp "$1" "$2" || rc=$?
+  printf '%s' "$rc"
+}
+[[ "$(vc v0.2.2 v0.2.2)" == "0" ]] && t_pass "同版本判为相等" || t_fail "同版本比较错误"
+[[ "$(vc 0.2.2 v0.2.2)" == "0" ]] && t_pass "忽略 v 前缀" || t_fail "v 前缀影响比较"
+[[ "$(vc v0.2.3 v0.2.2)" == "1" ]] && t_pass "patch 更大判为更新" || t_fail "patch 比较错误"
+[[ "$(vc v0.2.2 v0.3.0)" == "2" ]] && t_pass "minor 更小判为落后" || t_fail "minor 比较错误"
+[[ "$(vc v1.0.0 v0.9.9)" == "1" ]] && t_pass "major 优先于 minor" || t_fail "major 比较错误"
+[[ "$(vc v0.2.10 v0.2.9)" == "1" ]] && t_pass "按数值而非字典序比较" || t_fail "10 与 9 比较错误"
+[[ "$(vc v0.2 v0.2.0)" == "0" ]] && t_pass "缺失段补 0" || t_fail "缺段比较错误"
+[[ "$(vc v0.2.2-rc1 v0.2.2)" == "0" ]] && t_pass "忽略预发布后缀" || t_fail "预发布后缀比较错误"
+
+update_body="$(sed -n '/^cmd_update() {/,/^}/p' "$ROOT/scripts/bh")"
+t_contains "升级前先比对版本" "$update_body" 'version_cmp "$cur" "$target"'
+t_contains "已是最新则直接返回" "$update_body" "已是最新版本"
+t_contains "不自动降级" "$update_body" "不自动降级"
+t_contains "支持 --force 强制重装" "$update_body" "-f | --force) force=1"
+t_contains "把目标版本传给安装脚本" "$update_body" 'NOVA_VERSION="$target"'
+t_contains "取版本号不依赖 sort -V" "$(sed -n '/^version_cmp() {/,/^}/p' "$ROOT/scripts/bh")" '10#${x:-0}'
+
+# 分派漏掉 "$@" 会让 bh update v0.2.3 / --force 静默退化成「升级到最新版」，
+# 这类缺陷只有真机演练才会暴露，因此在这里做静态兜底。
+dispatch_body="$(sed -n '/^main() {/,/^}/p' "$ROOT/scripts/bh")"
+t_contains "update 分派转发参数" "$dispatch_body" 'update | upgrade) cmd_update "$@"'
+
+missing_fwd=""
+while read -r fn; do
+  [[ -n "$fn" ]] || continue
+  body="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/scripts/bh")"
+  # 只关心真的会解析位置参数的子命令；awk '{print $1}' 之类的内部用法不算
+  grep -qE '\$# -gt|case "\$1" in|="\$\{?1' <<<"$body" || continue
+  grep -qE "\b${fn} \"\\\$@\"" <<<"$dispatch_body" ||
+    missing_fwd+="${fn} "
+done <<<"$(grep -oE '^cmd_[a-z_]+' "$ROOT/scripts/bh" | sort -u)"
+if [[ -z "$missing_fwd" ]]; then
+  t_pass "所有读取参数的子命令都在分派时转发 \$@"
+else
+  t_fail "以下子命令读参数但分派未转发 \$@：${missing_fwd}"
+fi
 
 echo "== 变量引用与中文标点 =="
 
