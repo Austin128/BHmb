@@ -14,7 +14,7 @@
 
 | 层 | 选型 |
 | --- | --- |
-| 后端 | Go 1.24、Gin、GORM、SQLite / MySQL / PostgreSQL、slog |
+| 后端 | Go 1.25、Gin、GORM、SQLite / MySQL / PostgreSQL、slog |
 | 认证 | HS256 JWT（访问令牌）+ 不透明刷新令牌（仅存 SHA-256 摘要）、bcrypt、HKDF 派生密钥 |
 | 前端 | Vue 3、TypeScript、Arco Design Vue、Pinia、Vue Router、Vue I18n、Vite 6、Vitest |
 
@@ -53,11 +53,11 @@ curl -fsSL https://raw.githubusercontent.com/Austin128/BHmb/main/scripts/install
 脚本按 GitHub Release → 本地包 → 源码构建的顺序取安装内容，默认装最新 Release（amd64 / arm64，
 带 SHA256 校验），服务器不需要任何工具链。指定版本用 `NOVA_VERSION=v0.1.0`。
 
-取不到在线包时（例如无法访问 GitHub）会回落源码构建：具备 `git`、Go 1.24、`pnpm`、`make`
+取不到在线包时（例如无法访问 GitHub）会回落源码构建：具备 `git`、Go 1.25、`pnpm`、`make`
 时自动克隆仓库到临时目录构建，缺工具则明确提示改用下面两种方式：
 
 ```bash
-# 方式一：服务器上克隆后从源码安装（需 Go 1.24 + pnpm）
+# 方式一：服务器上克隆后从源码安装（需 Go 1.25 + pnpm）
 git clone https://github.com/Austin128/BHmb.git && cd BHmb
 sudo NOVA_FROM_SOURCE=1 bash scripts/install.sh
 ```

@@ -150,7 +150,7 @@ build_from_source() {
   if [[ ! -f "$root/go.mod" ]]; then
     local miss=()
     command -v git >/dev/null 2>&1 || miss+=(git)
-    command -v go >/dev/null 2>&1 || miss+=("Go 1.24+")
+    command -v go >/dev/null 2>&1 || miss+=("Go 1.25+")
     command -v pnpm >/dev/null 2>&1 || miss+=(pnpm)
     command -v make >/dev/null 2>&1 || miss+=(make)
     [[ ${#miss[@]} -eq 0 ]] || die "无在线发布包且不在仓库目录内，需自行构建但缺少：${miss[*]}
@@ -161,7 +161,7 @@ build_from_source() {
     git clone --depth 1 "https://github.com/${REPO}.git" "$root" >/dev/null 2>&1 ||
       die "克隆仓库失败，请检查服务器到 github.com 的网络"
   fi
-  command -v go >/dev/null 2>&1 || die "从源码构建需要 Go 1.24+"
+  command -v go >/dev/null 2>&1 || die "从源码构建需要 Go 1.25+"
   command -v pnpm >/dev/null 2>&1 || die "从源码构建需要 pnpm（前端产物要嵌入二进制）"
   command -v make >/dev/null 2>&1 || die "从源码构建需要 make"
 
