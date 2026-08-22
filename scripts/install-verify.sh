@@ -154,6 +154,14 @@ env_content="$(dexec 'cat /opt/novapanel/conf/panel.env' || true)"
 perm="$(dexec "stat -c '%a' /opt/novapanel/conf/master.key" || true)"
 [[ "$perm" == "600" ]] && t_pass "master.key 权限 600" || t_fail "master.key 权限为 $perm"
 
+# ldflags 的变量名写错（大小写不符）会让发布二进制一直报 dev，装上后才看得出来
+ver="$(dexec '/opt/novapanel/bin/novapanel -version' || true)"
+if [[ "$ver" == *"novapanel "* && "$ver" != *"novapanel dev"* && "$ver" != *"commit none"* ]]; then
+  t_pass "二进制已注入版本信息（${ver}）"
+else
+  t_fail "二进制版本信息未注入：${ver}"
+fi
+
 step "校验 bh 子命令"
 dexec 'bh info | grep -q 面板地址' && t_pass "bh info 输出面板地址" || t_fail "bh info 异常"
 dexec 'bh status >/dev/null' && t_pass "bh status 可用" || t_fail "bh status 异常"
