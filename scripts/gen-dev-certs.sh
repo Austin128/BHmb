@@ -14,7 +14,7 @@ CRT="$OUT_DIR/panel.crt"
 KEY="$OUT_DIR/panel.key"
 
 if [[ -f "$CRT" && -f "$KEY" && "${FORCE:-}" != "1" ]]; then
-  echo "证书已存在：$CRT（设置 FORCE=1 可覆盖）"
+  echo "证书已存在：${CRT}（设置 FORCE=1 可覆盖）"
   exit 0
 fi
 

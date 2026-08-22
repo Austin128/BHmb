@@ -65,6 +65,56 @@ jobs:
       - name: sqlite 迁移演练
         run: ./scripts/migrate-test.sh
 
+  deploy-scripts:
+    name: 部署脚本（语法 / 静态检查 / 单测）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash 语法检查
+        run: |
+          for f in scripts/bh scripts/*.sh; do
+            bash -n "$f"
+          done
+
+      # shellcheck 在 ubuntu-latest 上预装；只让 error 级别阻断，风格类告警不挡合并
+      - name: shellcheck
+        run: shellcheck -S error scripts/bh scripts/*.sh
+
+      - name: 部署脚本单测
+        run: ./scripts/deploy-test.sh
+
+  install-verify:
+    name: 真机安装演练（systemd 容器）
+    runs-on: ubuntu-latest
+    # 需要构建全量发布包 + 跑 systemd 容器，耗时较长，只在 main 与手动触发时执行
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 打包
+        run: make release
+
+      - name: 容器内演练安装 → 登录 → bh → 升级 → 卸载
+        run: ./scripts/install-verify.sh
+
   frontend:
     name: 前端（类型检查 / 测试 / 构建）
     runs-on: ubuntu-latest

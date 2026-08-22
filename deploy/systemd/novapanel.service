@@ -1,0 +1,31 @@
+[Unit]
+Description=NovaPanel 控制面
+Documentation=https://github.com/Austin128/BHmb
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__NOVA_HOME__
+# panel.env 可选：安装脚本用它注入首次启动的初始管理员口令，之后会清空
+EnvironmentFile=-__NOVA_HOME__/conf/panel.env
+ExecStart=__NOVA_HOME__/bin/novapanel -config __NOVA_HOME__/conf/panel.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+# 面板需要管理宿主机（后续里程碑要装运行环境、改 Nginx 配置、开容器），
+# 因此以 root 运行，不能启用 ProtectSystem/PrivateTmp 这类会切断管理能力的沙箱。
+# 下面两项在不影响管理能力的前提下缩小攻击面。
+NoNewPrivileges=false
+RestrictSUIDSGID=true
+# 日志同时进 journal 与 __NOVA_HOME__/logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=novapanel
+
+[Install]
+WantedBy=multi-user.target

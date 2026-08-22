@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# NovaPanel 管理命令（对应宝塔的 bt）。
+# 不带参数进入交互菜单，也可直接用子命令：bh start / bh info / bh passwd ...
+# 安装位置：/usr/local/bin/bh，实际程序位于 ${NOVA_HOME}（默认 /opt/novapanel）。
+set -euo pipefail
+
+NOVA_HOME="${NOVA_HOME:-/opt/novapanel}"
+SERVICE="novapanel"
+CONF="$NOVA_HOME/conf/panel.yaml"
+CLI="$NOVA_HOME/bin/novactl"
+PANEL="$NOVA_HOME/bin/novapanel"
+REPO="Austin128/BHmb"
+
+C_OK=$'\033[32m'
+C_WARN=$'\033[33m'
+C_ERR=$'\033[31m'
+C_KEY=$'\033[36m'
+C_OFF=$'\033[0m'
+
+info() { printf '%s\n' "$*"; }
+ok() { printf '%s✓ %s%s\n' "$C_OK" "$*" "$C_OFF"; }
+warn() { printf '%s! %s%s\n' "$C_WARN" "$*" "$C_OFF" >&2; }
+die() {
+  printf '%s✗ %s%s\n' "$C_ERR" "$*" "$C_OFF" >&2
+  exit 1
+}
+
+need_root() {
+  [[ "$(id -u)" -eq 0 ]] || die "该操作需要 root，请用 sudo bh $*"
+}
+
+need_install() {
+  [[ -x "$PANEL" ]] || die "未找到 ${PANEL}，NovaPanel 可能未安装"
+}
+
+# 只在 server: 段内取键值，避免误取 redis/database 段的同名键
+conf_get() {
+  local key="$1" section="${2:-server}"
+  [[ -f "$CONF" ]] || return 1
+  awk -v sec="$section:" -v key="$key" '
+    $0 ~ "^"sec"[[:space:]]*$" { inside = 1; next }
+    /^[a-z_]+:[[:space:]]*$/ { inside = 0 }
+    inside && $1 == key":" { gsub(/^[[:space:]]*|[[:space:]]*$/, "", $2); print $2; exit }
+  ' "$CONF"
+}
+
+panel_port() { conf_get port || true; }
+
+panel_scheme() {
+  local enabled
+  enabled="$(awk '/^[[:space:]]*tls:[[:space:]]*$/ {inside=1; next} inside && $1=="enabled:" {print $2; exit}' "$CONF" 2>/dev/null || true)"
+  [[ "$enabled" == "true" ]] && echo https || echo http
+}
+
+lan_ip() {
+  local addr=""
+  if command -v ip >/dev/null 2>&1; then
+    addr="$(ip -4 route get 1.1.1.1 2>/dev/null |
+      awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}' || true)"
+  fi
+  if [[ -z "$addr" ]] && command -v hostname >/dev/null 2>&1; then
+    addr="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  printf '%s' "$addr"
+}
+
+svc() { systemctl "$1" "$SERVICE"; }
+
+cmd_start() {
+  need_root start
+  svc start && ok "已启动"
+}
+
+cmd_stop() {
+  need_root stop
+  svc stop && ok "已停止"
+}
+
+cmd_restart() {
+  need_root restart
+  svc restart && ok "已重启"
+}
+
+cmd_reload() {
+  need_root reload
+  svc reload && ok "已重载配置"
+}
+
+cmd_status() {
+  systemctl status "$SERVICE" --no-pager -l || true
+}
+
+cmd_log() {
+  local lines="${1:-200}"
+  journalctl -u "$SERVICE" -n "$lines" --no-pager
+}
+
+cmd_logf() {
+  journalctl -u "$SERVICE" -f
+}
+
+cmd_info() {
+  need_install
+  local port scheme ip entrance
+  port="$(panel_port)"
+  scheme="$(panel_scheme)"
+  entrance="$(conf_get entrance || true)"
+  ip="$(lan_ip)"
+  [[ -n "$port" ]] || die "无法从 $CONF 解析端口"
+  if [[ "$entrance" == "/" || -z "$entrance" ]]; then entrance=""; fi
+
+  info "面板地址：${C_KEY}${scheme}://${ip:-<服务器IP>}:${port}${entrance}${C_OFF}"
+  info "本机地址：${C_KEY}${scheme}://127.0.0.1:${port}${entrance}${C_OFF}"
+  info "管理账号：${C_KEY}admin${C_OFF}（口令忘记可执行 bh passwd 重置）"
+  info "配置文件：$CONF"
+  info "数据目录：$NOVA_HOME/data"
+  if [[ "$scheme" == "https" ]]; then
+    warn "默认使用自签证书，浏览器会提示不受信任；生产环境请换成受信证书"
+  fi
+  systemctl is-active --quiet "$SERVICE" && ok "服务运行中" || warn "服务未运行（bh start 启动）"
+}
+
+cmd_passwd() {
+  need_root passwd
+  need_install
+  local user="${1:-admin}"
+  "$CLI" passwd -u "$user" -c "$CONF"
+}
+
+# 只改 server 段的第一处 port，避开 agent.grpc_port / redis 等其它段
+set_conf_port() {
+  local conf="$1" port="$2"
+  awk -v p="$port" '
+    /^server:[[:space:]]*$/ { inside = 1; print; next }
+    inside && $1 == "port:" && !done { sub(/port:.*/, "port: " p); done = 1 }
+    /^[a-z_]+:[[:space:]]*$/ && !/^server:/ { inside = 0 }
+    { print }
+  ' "$conf" >"$conf.tmp" && mv "$conf.tmp" "$conf"
+}
+
+cmd_port() {
+  need_root port
+  need_install
+  local port="${1:-}"
+  [[ "$port" =~ ^[0-9]+$ ]] || die "用法：bh port <1-65535>"
+  ((port > 0 && port < 65536)) || die "端口需在 1-65535 之间"
+
+  set_conf_port "$CONF" "$port"
+
+  open_firewall "$port"
+  svc restart && ok "端口已改为 $port 并重启"
+  cmd_info
+}
+
+open_firewall() {
+  local port="$1"
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null && firewall-cmd --reload >/dev/null
+    ok "firewalld 已放行 ${port}/tcp"
+  elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw allow "${port}/tcp" >/dev/null
+    ok "ufw 已放行 ${port}/tcp"
+  else
+    warn "未检测到活动的 firewalld/ufw，如有云厂商安全组请手动放行 ${port}/tcp"
+  fi
+}
+
+cmd_update() {
+  need_root update
+  need_install
+  local installer="$NOVA_HOME/scripts/install.sh"
+  if [[ -x "$installer" ]]; then
+    NOVA_HOME="$NOVA_HOME" NOVA_UPGRADE=1 "$installer"
+  else
+    die "未找到 ${installer}，请重新执行一键安装命令完成升级"
+  fi
+}
+
+cmd_uninstall() {
+  need_root uninstall
+  local uninstaller="$NOVA_HOME/scripts/uninstall.sh"
+  [[ -x "$uninstaller" ]] || die "未找到 $uninstaller"
+  "$uninstaller" "$@"
+}
+
+cmd_version() {
+  need_install
+  "$PANEL" -version 2>/dev/null || "$CLI" version -c "$CONF"
+}
+
+cmd_help() {
+  cat <<'EOF'
+bh —— NovaPanel 管理命令
+
+  bh                 进入交互菜单
+  bh start           启动面板
+  bh stop            停止面板
+  bh restart         重启面板
+  bh reload          重载配置（不中断连接）
+  bh status          查看服务状态
+  bh log [行数]      查看最近日志（默认 200 行）
+  bh logf            实时跟踪日志
+  bh info            显示面板地址、账号与关键路径
+  bh passwd [用户]   重置口令（默认 admin，随机生成并打印一次）
+  bh port <端口>     修改面板端口并放行防火墙
+  bh update          升级到最新版本
+  bh uninstall       卸载面板（默认保留 data 目录）
+  bh version         打印版本
+  bh help            显示本帮助
+EOF
+}
+
+menu() {
+  local choice
+  while true; do
+    printf '\n%sNovaPanel 管理菜单%s（NOVA_HOME=%s）\n' "$C_KEY" "$C_OFF" "$NOVA_HOME"
+    systemctl is-active --quiet "$SERVICE" && printf '状态：%s运行中%s\n' "$C_OK" "$C_OFF" ||
+      printf '状态：%s未运行%s\n' "$C_WARN" "$C_OFF"
+    cat <<'EOF'
+  1) 启动面板          6) 重置 admin 口令
+  2) 停止面板          7) 修改面板端口
+  3) 重启面板          8) 升级面板
+  4) 查看状态          9) 卸载面板
+  5) 查看日志          0) 退出
+EOF
+    read -r -p "请输入序号：" choice
+    case "$choice" in
+      1) cmd_start ;;
+      2) cmd_stop ;;
+      3) cmd_restart ;;
+      4) cmd_status ;;
+      5) cmd_log 200 ;;
+      6) cmd_passwd admin ;;
+      7)
+        read -r -p "新端口：" p
+        cmd_port "$p"
+        ;;
+      8) cmd_update ;;
+      9) cmd_uninstall ;;
+      0 | q | Q) exit 0 ;;
+      i | info) cmd_info ;;
+      *) warn "无效选项：$choice" ;;
+    esac
+  done
+}
+
+main() {
+  local sub="${1:-}"
+  [[ $# -gt 0 ]] && shift || true
+  case "$sub" in
+    "") cmd_info; menu ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    restart) cmd_restart ;;
+    reload) cmd_reload ;;
+    status) cmd_status ;;
+    log) cmd_log "$@" ;;
+    logf) cmd_logf ;;
+    info) cmd_info ;;
+    passwd) cmd_passwd "$@" ;;
+    port) cmd_port "$@" ;;
+    update | upgrade) cmd_update ;;
+    uninstall) cmd_uninstall "$@" ;;
+    version | -v | --version) cmd_version ;;
+    help | -h | --help) cmd_help ;;
+    *) die "未知命令：${sub}（bh help 查看用法）" ;;
+  esac
+}
+
+# 被 source 时只导出函数，便于 scripts/deploy-test.sh 单测配置解析逻辑
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

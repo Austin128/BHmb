@@ -20,7 +20,7 @@ SERVICE_PKGS   := ./internal/service/...
 .DEFAULT_GOAL := help
 .PHONY: help doctor install-tools proto web web-dev web-typecheck web-test build build-panel build-agent \
         build-cli run run-watch test test-cover test-golden lint fmt vet migrate \
-        migrate-test check-errcode smoke certs docker release audit clean tidy mocks swagger
+        migrate-test check-errcode smoke deploy-test install-verify certs docker release audit clean tidy mocks swagger
 
 # ===== 帮助与环境自检 =====
 help: ## 打印所有目标
@@ -69,9 +69,14 @@ release: web ## 交叉编译 amd64+arm64 并打包
 			cmd=$${c%:*}; out=$${c#*:}; \
 			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
 			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" \
-				-o $(DIST_DIR)/$$os-$$arch/$$out ./cmd/$$cmd || exit 1; \
+				-o $(DIST_DIR)/$$os-$$arch/bin/$$out ./cmd/$$cmd || exit 1; \
 		done; \
-		tar -C $(DIST_DIR)/$$os-$$arch -czf \
+		mkdir -p $(DIST_DIR)/$$os-$$arch/conf $(DIST_DIR)/$$os-$$arch/scripts $(DIST_DIR)/$$os-$$arch/deploy/systemd; \
+		cp conf/panel.example.yaml $(DIST_DIR)/$$os-$$arch/conf/; \
+		cp scripts/bh scripts/install.sh scripts/uninstall.sh $(DIST_DIR)/$$os-$$arch/scripts/; \
+		cp deploy/systemd/novapanel.service $(DIST_DIR)/$$os-$$arch/deploy/systemd/; \
+		chmod +x $(DIST_DIR)/$$os-$$arch/scripts/*; \
+		COPYFILE_DISABLE=1 tar --no-xattrs -C $(DIST_DIR)/$$os-$$arch -czf \
 			$(DIST_DIR)/$(APP)-$(VERSION)-$$os-$$arch.tar.gz . ; \
 	done
 	@cd $(DIST_DIR) && shasum -a 256 *.tar.gz > SHA256SUMS
@@ -94,6 +99,12 @@ check-errcode: ## 校验错误码常量、statusMap、05 号文档三处一致
 
 smoke: ## 认证链路端到端冒烟（真实启动 panel，含 SPA 与刷新令牌轮换）
 	./scripts/auth-smoke.sh
+
+deploy-test: ## 部署脚本单测（install.sh / bh / systemd 模板的配置改写逻辑）
+	./scripts/deploy-test.sh
+
+install-verify: ## 带 systemd 的容器内真机演练安装/登录/bh/升级/卸载（需 Docker）
+	./scripts/install-verify.sh
 
 # ===== 质量 =====
 fmt: ## 格式化
