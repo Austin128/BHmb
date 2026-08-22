@@ -51,6 +51,10 @@ func run(args []string) error {
 		return cmdSeed(args[1:])
 	case "passwd":
 		return cmdPasswd(args[1:])
+	case "user":
+		return cmdUser(args[1:])
+	case "session":
+		return cmdSession(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
 	case "version", "-v", "--version":
@@ -74,6 +78,11 @@ func usage() {
   migrate status          列出迁移状态
   seed                    幂等写入角色与权限种子数据
   passwd -u <用户名>      重置用户口令（不传 -p 时生成随机口令）
+  user list               列出账号、状态、二次验证与最近登录
+  user unlock -u <用户名> 解除登录失败锁定并清零失败计数
+  user 2fa off -u <名>    关闭该账号的二次验证
+  session list [-u <名>]  列出最近 100 个会话
+  session revoke -u <名>  吊销该账号会话（-all 吊销全部）
   config check            校验配置文件
   version                 打印版本
 
