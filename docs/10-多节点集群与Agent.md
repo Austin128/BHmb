@@ -1,4 +1,4 @@
-# NovaPanel（星舵面板）· 多节点集群与 Agent
+# 青垣面板 · 多节点集群与 Agent
 
 ## 文档信息
 
@@ -8,8 +8,8 @@
 | 文档版本 | v1.0 |
 | 更新日期 | 2026-08-17 |
 | 状态 | 定稿 |
-| 适用版本 | NovaPanel v1.0 |
-| 产品代号 | nova |
+| 适用版本 | 青垣面板 v1.0 |
+| 产品代号 | qingyuan |
 | 覆盖内容 | 集群角色与拓扑、单机与集群一致性、Agent 内部模块与资源目标、AgentStream 双向流协议与完整 proto、帧路由与流控背压、内置 CA 与 mTLS、join token 注册与证书轮换、节点状态机与生命周期、心跳与故障判定、批量任务调度器、期望状态同步与漂移纠偏、NodeInvoker 跨节点路由、Agent 自升级、500 节点规模化与高可用、中继场景、接口清单、故障演练与排错手册 |
 | 关联文档 | [系统架构设计](./02-系统架构设计.md)、[技术栈与工程规范](./03-技术栈与工程规范.md)、[数据库设计](./04-数据库设计.md)、[API 接口规范](./05-API接口规范.md)、[文件管理与 WebSSH](./08-文件管理与WebSSH.md)、[容器与编排](./09-容器与编排.md)、[监控告警与可观测](./11-监控告警与可观测.md)、[安全合规与审计](./12-安全合规与审计.md)、[部署安装与升级](./14-部署安装与升级.md) |
 
@@ -220,7 +220,7 @@ flowchart TB
 ```ini
 # /etc/systemd/system/nova-agent.service
 [Unit]
-Description=NovaPanel Agent
+Description=Qingyuan Panel Agent
 Documentation=https://novapanel.io/docs/agent
 After=network-online.target
 Wants=network-online.target
@@ -1124,7 +1124,7 @@ Agent 侧还有一层进程级保护：当 `LocalQueue` 积压超过 200MB 或 C
 | 服务端证书有效期 | 2 年 | 变更成本高，且受 CA 保护 |
 | Root CA 私钥 | 生成中间 CA 后建议离线保存 | 面板正常运行只需 `agent-ca.key` |
 | SAN 约定 | Agent 证书 SAN 含 `URI:nova://node/<node_id>/<node_uuid>`，不含 IP/DNS | Agent 不作为服务端，无需域名校验；用 URI SAN 承载身份 |
-| Subject | `CN=<node_uuid>`, `O=NovaPanel`, `OU=agent`, `serialNumber=<node_id>` | CN 用 uuid 避免主机名变更导致证书失效 |
+| Subject | `CN=<node_uuid>`, `O=Qingyuan Panel`, `OU=agent`, `serialNumber=<node_id>` | CN 用 uuid 避免主机名变更导致证书失效 |
 | 序列号 | 128 位随机数（`crypto/rand`），十六进制存 `node_server.cert_serial` | 便于精确吊销 |
 | KeyUsage | `DigitalSignature`；ExtKeyUsage `ClientAuth` | Agent 证书**只能**做客户端认证，即使泄露也无法冒充服务端 |
 
@@ -2004,7 +2004,7 @@ func (s *Scheduler) execTarget(ctx context.Context, t *model.TaskTarget, task *m
 
 ```nginx
 # ==== nova-managed BEGIN (site=blog.example.com, version=87, hash=3f9a1c) ====
-# 本区块由 NovaPanel 生成，手动修改将在下次下发时被覆盖
+# 本区块由 青垣面板 生成，手动修改将在下次下发时被覆盖
 server { ... }
 # ==== nova-managed END ====
 include /www/server/openresty/nginx/conf/nova/custom/blog.example.com.conf;  # 用户自定义，面板不改

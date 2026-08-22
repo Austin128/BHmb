@@ -1,4 +1,4 @@
-# NovaPanel（星舵面板）· 前端架构与 Arco Design 规范
+# 青垣面板 · 前端架构与 Arco Design 规范
 
 ## 文档信息
 
@@ -8,8 +8,8 @@
 | 文档版本 | v1.0 |
 | 更新日期 | 2026-08-17 |
 | 状态 | 定稿 |
-| 适用版本 | NovaPanel v1.0 |
-| 产品代号 | nova |
+| 适用版本 | 青垣面板 v1.0 |
+| 产品代号 | qingyuan |
 | 覆盖内容 | 前端分层、工程初始化、请求层、路由与权限、Pinia、布局、Arco 令牌体系、业务组件、实时数据、表单校验、页面范式、i18n、性能、可访问性、质量门禁、Mock |
 | 关联文档 | [系统架构设计](./02-系统架构设计.md)、[技术栈与工程规范](./03-技术栈与工程规范.md)、[API 接口规范](./05-API接口规范.md)、[文件管理与 WebSSH](./08-文件管理与WebSSH.md)、[监控告警与可观测](./11-监控告警与可观测.md) |
 
@@ -276,7 +276,7 @@ export default defineConfig(({ mode }) => {
 `.env.development`：
 
 ```bash
-VITE_APP_TITLE=NovaPanel
+VITE_APP_TITLE=青垣面板
 VITE_PUBLIC_PATH=/
 VITE_API_BASE_URL=/api/v1
 VITE_WS_BASE_URL=/api/v1/ws
@@ -290,7 +290,7 @@ VITE_LOG_LEVEL=debug
 `.env.production`：
 
 ```bash
-VITE_APP_TITLE=NovaPanel
+VITE_APP_TITLE=青垣面板
 VITE_PUBLIC_PATH=/
 VITE_API_BASE_URL=/api/v1
 VITE_WS_BASE_URL=/api/v1/ws
