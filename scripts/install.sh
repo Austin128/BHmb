@@ -138,11 +138,32 @@ download_release() {
 }
 
 build_from_source() {
-  local payload="$1" root
-  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  [[ -f "$root/go.mod" ]] || die "未在仓库目录内，无法从源码构建；请改用 NOVA_PKG 指定本地发布包"
+  local payload="$1" root src="${BASH_SOURCE[0]:-}"
+  # curl | bash 时脚本来自标准输入，BASH_SOURCE 为空，退回从当前目录向上找仓库根
+  if [[ -n "$src" && -f "$(dirname "$src")/../go.mod" ]]; then
+    root="$(cd "$(dirname "$src")/.." && pwd)"
+  else
+    root="$PWD"
+    while [[ "$root" != "/" && ! -f "$root/go.mod" ]]; do root="$(dirname "$root")"; done
+  fi
+  # 不在仓库内（典型是一键安装且尚无 Release）时，克隆到临时目录再构建
+  if [[ ! -f "$root/go.mod" ]]; then
+    local miss=()
+    command -v git >/dev/null 2>&1 || miss+=(git)
+    command -v go >/dev/null 2>&1 || miss+=("Go 1.24+")
+    command -v pnpm >/dev/null 2>&1 || miss+=(pnpm)
+    command -v make >/dev/null 2>&1 || miss+=(make)
+    [[ ${#miss[@]} -eq 0 ]] || die "无在线发布包且不在仓库目录内，需自行构建但缺少：${miss[*]}
+可选做法：1) 装上上述工具后重试；2) 本地 make release 打包后 NOVA_PKG=/path/pkg.tar.gz 安装；3) git clone 仓库后 cd 进去执行 NOVA_FROM_SOURCE=1 bash scripts/install.sh"
+
+    step "克隆仓库到临时目录构建（https://github.com/${REPO}）"
+    root="$WORK_DIR/src"
+    git clone --depth 1 "https://github.com/${REPO}.git" "$root" >/dev/null 2>&1 ||
+      die "克隆仓库失败，请检查服务器到 github.com 的网络"
+  fi
   command -v go >/dev/null 2>&1 || die "从源码构建需要 Go 1.24+"
   command -v pnpm >/dev/null 2>&1 || die "从源码构建需要 pnpm（前端产物要嵌入二进制）"
+  command -v make >/dev/null 2>&1 || die "从源码构建需要 make"
 
   step "从源码构建（${root}）"
   (cd "$root" && make web build)
@@ -337,7 +358,8 @@ main() {
   summary
 }
 
-# 被 source 时只导出函数，便于 scripts/deploy-test.sh 单测配置写入逻辑
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# 被 source 时只导出函数，便于 scripts/deploy-test.sh 单测配置写入逻辑。
+# curl | bash 时脚本来自标准输入，BASH_SOURCE 为空，此时同样要执行 main。
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
   main "$@"
 fi

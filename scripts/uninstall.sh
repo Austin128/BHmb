@@ -41,7 +41,15 @@ else
 fi
 
 if [[ "$ASSUME_YES" != "1" ]]; then
-  read -r -p "确认继续？输入 yes 执行：" answer
+  # curl | bash 时标准输入是脚本本身，交互确认必须直读终端
+  if [[ -t 0 ]]; then
+    read -r -p "确认继续？输入 yes 执行：" answer
+  elif [[ -r /dev/tty ]]; then
+    read -r -p "确认继续？输入 yes 执行：" answer </dev/tty
+  else
+    echo "非交互环境无法确认，请加 -y 后重试" >&2
+    exit 1
+  fi
   [[ "$answer" == "yes" ]] || {
     echo "已取消"
     exit 0

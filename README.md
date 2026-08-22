@@ -51,8 +51,8 @@ curl -fsSL https://raw.githubusercontent.com/Austin128/BHmb/main/scripts/install
 ```
 
 脚本按 GitHub Release → 本地包 → 源码构建的顺序取安装内容。**仓库目前还没有发布 Release**，
-所以在线安装会回落到源码构建（需要服务器上有 Go 1.24 与 pnpm）。在打出第一个 tag 之前，
-推荐下面两种确定可用的方式：
+所以在线安装会回落到源码构建：服务器上具备 `git`、Go 1.24、`pnpm`、`make` 时脚本会自动克隆仓库
+到临时目录构建，缺工具则会明确提示改用下面两种方式：
 
 ```bash
 # 方式一：服务器上克隆后从源码安装（需 Go 1.24 + pnpm）

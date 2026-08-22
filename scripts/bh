@@ -268,6 +268,6 @@ main() {
 }
 
 # 被 source 时只导出函数，便于 scripts/deploy-test.sh 单测配置解析逻辑
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
   main "$@"
 fi

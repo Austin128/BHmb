@@ -115,6 +115,23 @@ t_contains "ExecStart 指向安装目录" "$unit_text" "ExecStart=$NOVA_HOME/bin
 t_contains "EnvironmentFile 可选加载" "$unit_text" "EnvironmentFile=-$NOVA_HOME/conf/panel.env"
 t_contains "开机自启目标" "$unit_text" "WantedBy=multi-user.target"
 
+echo "== curl | bash 管道执行 =="
+
+# 管道执行时脚本来自标准输入，BASH_SOURCE 为空数组；set -u 下直接展开会报
+# "BASH_SOURCE[0]: unbound variable" 并且 main 根本不会跑，安装静默失败。
+for script in install.sh uninstall.sh; do
+  piped="$(cat "$ROOT/scripts/$script" | bash 2>&1 || true)"
+  if [[ "$piped" == *"unbound variable"* ]]; then
+    t_fail "$script 管道执行报未绑定变量：$piped"
+  else
+    t_contains "$script 管道执行进入主流程（被 root 检查拦下）" "$piped" "root"
+  fi
+done
+
+# 反过来，source 时不能跑主流程，否则 deploy-test 自己就会被 precheck 打断
+sourced="$(bash -c "source '$ROOT/scripts/install.sh'; type -t main" 2>&1 || true)"
+t_eq "install.sh 被 source 时只导出函数" "function" "$sourced"
+
 echo "== 变量引用与中文标点 =="
 
 # bash 会把紧跟变量名的 UTF-8 字节当成变量名的一部分：
