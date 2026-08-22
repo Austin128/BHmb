@@ -260,6 +260,18 @@ t_contains "包名按 tag 与架构拼装" "$install_text" "novapanel-\${tag}-li
 check_body="$(sed -n '/^cmd_check() {/,/^}/p' "$ROOT/scripts/bh")"
 t_contains "缺探测工具时跳过端口检查" "$check_body" "跳过端口检测"
 
+# 首启健康探测：曾用 is-active 判断，服务处于 activating 时循环第一轮就跳出，
+# 把慢启动误报成启动失败，随后所有断言连锁失败。
+start_body="$(sed -n '/^start_service() {/,/^}/p' "$ROOT/scripts/install.sh")"
+t_contains "健康探测最多 30 轮" "$start_body" "seq 1 30"
+t_contains "只有 failed 才提前退出" "$start_body" '[[ "$state" == "failed" ]] && break'
+if printf '%s\n' "$start_body" | grep -q 'is-active --quiet .*|| break'; then
+  t_fail "健康探测仍会因 activating 提前退出"
+else
+  t_pass "健康探测不因 activating 提前退出"
+fi
+t_contains "演练脚本等待服务就绪" "$(cat "$ROOT/scripts/install-verify.sh")" "wait_health"
+
 echo "== 变量引用与中文标点 =="
 
 # bash 会把紧跟变量名的 UTF-8 字节当成变量名的一部分：

@@ -127,6 +127,20 @@ else
 fi
 
 step "校验服务与接口"
+
+# 安装脚本返回后服务可能仍在收尾（首启要生成自签证书、跑迁移与种子），
+# 这里再等一轮就绪，否则慢机器上后面的断言会连锁假失败。
+wait_health() {
+  local i code
+  for i in $(seq 1 30); do
+    code="$(dexec "curl -sk -o /dev/null -w '%{http_code}' --max-time 3 https://127.0.0.1:$PORT/api/v1/health" 2>/dev/null || true)"
+    [[ "$code" == "200" ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+wait_health || true
+
 dexec "systemctl is-active --quiet novapanel" && t_pass "systemd 服务处于 active" || t_fail "服务未运行"
 dexec "systemctl is-enabled --quiet novapanel" && t_pass "已设为开机自启" || t_fail "未设为开机自启"
 

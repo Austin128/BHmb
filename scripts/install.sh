@@ -296,7 +296,7 @@ start_service() {
   systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
   systemctl restart "$SERVICE"
 
-  local scheme="https" i
+  local scheme="https" i state
   if grep -qE '^\s{4}enabled:\s*false' "$NOVA_HOME/conf/panel.yaml"; then scheme="http"; fi
   for i in $(seq 1 30); do
     if command -v curl >/dev/null 2>&1 &&
@@ -305,7 +305,10 @@ start_service() {
       SCHEME="$scheme"
       return 0
     fi
-    systemctl is-active --quiet "$SERVICE" || break
+    # activating（含 auto-restart）与 inactive 都是启动中的正常过渡态，
+    # 之前用 is-active 判断会在第一轮就跳出，把慢启动误报成启动失败。
+    state="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+    [[ "$state" == "failed" ]] && break
     sleep 1
   done
 
