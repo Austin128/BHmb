@@ -90,25 +90,54 @@ systemd 服务、生成 16 位随机 admin 口令并只打印一次、探测 `/a
 
 ### bh 命令
 
+不带参数运行进入分组编号菜单（等同宝塔 `bt`），也可直接带子命令；`bh help` 看完整列表。
+
 ```bash
-bh                 # 进入交互菜单（等同宝塔 bt）
-bh info            # 面板地址、账号、关键路径
-bh start|stop|restart|reload
-bh status          # systemctl status
-bh log [行数]      # 最近日志，bh logf 实时跟踪
-bh passwd [用户]   # 重置口令，默认 admin，随机生成并只打印一次
-bh port 8443       # 改端口并同步放行防火墙
-bh update          # 升级
-bh uninstall       # 卸载，默认保留 data/ 与 conf/；--purge 连数据一起删
+# 服务
+bh start|stop|restart|reload|status
+bh enable|disable        # 开关开机自启
+bh log [行数] | bh logf # 最近日志 / 实时跟踪
+
+# 信息与诊断
+bh info                  # 面板地址、账号、关键路径
+bh check                 # 一键自检：服务 / 端口 / 健康 / 密钥权限 / 配置 / 迁移 / 磁盘
+bh confcheck             # 校验配置
+bh cert info             # 证书主体与有效期
+
+# 账号与安全
+bh passwd [用户]         # 重置口令，默认 admin，随机生成并只打印一次
+bh users                 # 账号、状态、二次验证、锁定与最近登录
+bh unlock [用户]         # 解除登录失败锁定
+bh 2fa off [用户]        # 丢失动态码设备时关闭二次验证
+bh sessions [用户]       # 最近 100 个会话
+bh kick <用户>|--all     # 吊销会话，强制重新登录
+bh ssl on|off            # HTTPS 开关
+bh port 8443             # 改端口并同步放行防火墙
+bh host 127.0.0.1        # 改监听地址
+
+# 维护
+bh conf                  # 编辑配置，校验失败自动回滚
+bh loglevel info         # 改日志级别
+bh cleanlog [天数]       # 清理面板与 systemd 日志
+bh backup [目录]         # 备份 conf 与 data（含主密钥，权限 600）
+bh restore <备份包>      # 从备份恢复（先备当前现状）
+bh migrate status|up     # 数据库迁移
+bh cert import <crt> <key>
+bh update                # 升级
+bh uninstall             # 卸载，默认保留 data/ 与 conf/；--purge 连数据一起删
 ```
+
+面板内部维护也可直接用 `novactl`：`user list` / `user unlock` / `user 2fa off` /
+`session list` / `session revoke` / `passwd` / `migrate` / `config check`。
 
 ### 安全提醒
 
 - 面板默认监听 `0.0.0.0` 且以 root 运行（后续里程碑要管理运行环境与系统服务）。
-  公网暴露前请用安全组或 `security.ip_whitelist` 限制来源 IP。
+  公网暴露前请用安全组或主机防火墙限制来源 IP；`security.ip_whitelist` 和
+  `server.entrance` 目前只做配置校验，服务端拦截与安全入口路由尚未实现。
 - 默认自签证书会被浏览器标记不受信，生产环境请把 `server.tls.cert_file`/`key_file`
   换成受信证书。
-- `/opt/novapanel/conf/master.key` 丢失会导致既有会话与加密字段不可用，务必纳入备份。
+- `/opt/novapanel/conf/master.key` 丢失会导致既有会话与加密字段不可用，务必纳入备份（`bh backup`）。
 
 ## 快速开始（本地开发）
 
