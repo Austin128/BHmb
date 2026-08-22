@@ -24,6 +24,10 @@ type Options struct {
 	Health *handler.Health
 	// File 为主机文件管理处理器；为空时不注册文件路由（未配置白名单等场景）。
 	File *handler.File
+	// System 为主机与面板运行信息处理器。
+	System *handler.System
+	// Admin 为账号、角色与权限点的只读查询处理器。
+	Admin *handler.Admin
 	// AuthMW 为认证中间件依赖，受保护路由使用。
 	AuthMW middleware.AuthDeps
 	// StaticFS 为已构建的前端静态资源；为空时不注册 SPA 路由（例如纯 API 部署）。
@@ -87,6 +91,29 @@ func Register(e *gin.Engine, o Options) {
 		authed.GET("/auth/profile", o.Auth.Profile)
 	}
 	registerFile(authed, o.File)
+	registerSystem(authed, o.System)
+	registerAdmin(authed, o.Admin)
+}
+
+// registerSystem 注册主机信息路由。总览页与运维页共用同一份快照，
+// 因此只要有查看总览的权限即可读取。
+func registerSystem(authed *gin.RouterGroup, h *handler.System) {
+	if h == nil {
+		return
+	}
+	authed.GET("/system/overview", middleware.RequirePermission("dashboard:overview:read"), h.Overview)
+}
+
+// registerAdmin 注册账号只读路由。写操作目前只在 novactl / bh 侧提供，
+// 因此这里不注册任何增删改，避免前端出现点了没用的按钮。
+func registerAdmin(authed *gin.RouterGroup, h *handler.Admin) {
+	if h == nil {
+		return
+	}
+	g := authed.Group("/user")
+	g.GET("/users", middleware.RequirePermission("user:user:list"), h.Users)
+	g.GET("/roles", middleware.RequirePermission("user:role:list"), h.Roles)
+	g.GET("/permissions", middleware.RequirePermission("user:permission:list"), h.Permissions)
 }
 
 // registerFile 注册文件管理路由。读、写、删、执行分开鉴权，

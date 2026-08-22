@@ -16,6 +16,8 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id int64) (*model.SysUser, error)
 	FindByUsername(ctx context.Context, tenantID int64, username string) (*model.SysUser, error)
 	Count(ctx context.Context) (int64, error)
+	// List 按创建时间分页列出本租户用户，返回当页数据与总数。
+	List(ctx context.Context, tenantID int64, offset, limit int) ([]model.SysUser, int64, error)
 	// MarkLoginSuccess 登录成功后清零失败计数并记录来源。
 	MarkLoginSuccess(ctx context.Context, id int64, at time.Time, ip string) error
 	// MarkLoginFailure 累加失败次数，达到上限时写入锁定截止时间，返回累计次数。
@@ -55,6 +57,26 @@ func (r *userRepo) Count(ctx context.Context) (int64, error) {
 		return 0, errs.Wrap(err, errs.CodeInternal, "用户数量统计失败")
 	}
 	return n, nil
+}
+
+// List 先数总数再取当页：页码越界时前端仍需要 total 才能回退到最后一页。
+func (r *userRepo) List(ctx context.Context, tenantID int64, offset, limit int) ([]model.SysUser, int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.SysUser{}).Where("tenant_id = ?", tenantID)
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, errs.Wrap(err, errs.CodeInternal, "用户数量统计失败")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var list []model.SysUser
+	if err := q.Order("id ASC").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
+		return nil, 0, errs.Wrap(err, errs.CodeInternal, "用户列表查询失败")
+	}
+	return list, total, nil
 }
 
 func (r *userRepo) MarkLoginSuccess(ctx context.Context, id int64, at time.Time, ip string) error {

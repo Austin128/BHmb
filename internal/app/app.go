@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/novapanel/novapanel/internal/service/auth"
 	filesvc "github.com/novapanel/novapanel/internal/service/file"
 	"github.com/novapanel/novapanel/internal/service/file/pathguard"
+	"github.com/novapanel/novapanel/internal/service/sysinfo"
 	"github.com/novapanel/novapanel/internal/web"
 	"github.com/novapanel/novapanel/migrations"
 )
@@ -200,6 +202,12 @@ func (a *App) initHTTP() error {
 		// Cookie 的 Secure 属性跟随 TLS：明文 HTTP 下设置 Secure 会让浏览器直接丢弃 Cookie
 		Auth:   handler.NewAuth(authSvc, a.cfg.Server.TLS.Enabled),
 		Health: handler.NewHealth(a.db, a.build, time.Now()),
+		System: handler.NewSystem(sysinfo.NewCollector(sysinfo.Build{
+			Version:   a.build.Version,
+			Commit:    a.build.Commit,
+			BuildTime: a.build.BuildTime,
+		}, time.Now(), a.dataDir()), a.db),
+		Admin: handler.NewAdmin(users, roles),
 		AuthMW: middleware.AuthDeps{
 			Tokens:     tokens,
 			Revokes:    revokes,
@@ -257,6 +265,15 @@ func (a *App) initHTTP() error {
 		}
 	}
 	return nil
+}
+
+// dataDir 返回本机数据落盘目录，用于总览页展示所在磁盘容量。
+// sqlite 直接取数据文件所在目录；MySQL/PostgreSQL 的数据不在本机，退回日志目录。
+func (a *App) dataDir() string {
+	if a.cfg.Database.Path != "" {
+		return filepath.Dir(a.cfg.Database.Path)
+	}
+	return a.cfg.Log.Dir
 }
 
 // ensureTLSCert 在开启 auto_self_signed 且证书缺失时生成自签证书，

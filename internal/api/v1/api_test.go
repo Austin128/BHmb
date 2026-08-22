@@ -33,6 +33,7 @@ import (
 	"github.com/novapanel/novapanel/internal/service/auth"
 	filesvc "github.com/novapanel/novapanel/internal/service/file"
 	"github.com/novapanel/novapanel/internal/service/file/pathguard"
+	"github.com/novapanel/novapanel/internal/service/sysinfo"
 	"github.com/novapanel/novapanel/migrations"
 )
 
@@ -138,6 +139,9 @@ func newApp(t *testing.T, opts ...appOption) *app {
 		Auth:   handler.NewAuth(svc, false), // 测试走 HTTP，不设置 Secure
 		Health: handler.NewHealth(db, handler.BuildInfo{Version: "test"}, time.Now()),
 		File:   handler.NewFile(fileSvc),
+		System: handler.NewSystem(
+			sysinfo.NewCollector(sysinfo.Build{Version: "test", Commit: "deadbeef"}, time.Now(), t.TempDir()), db),
+		Admin:  handler.NewAdmin(users, roles),
 		AuthMW: authMW,
 	})
 	require.NoError(t, err)

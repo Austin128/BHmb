@@ -4,6 +4,7 @@
  * 所有路径都用后端返回的绝对路径，前端不自行拼接父目录，避免与 pathguard 的判定产生偏差。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
 import { Message, Modal } from '@arco-design/web-vue'
 
@@ -33,6 +34,7 @@ import {
 import { BizError } from '@/types/api'
 import { useUserStore } from '@/store/modules/user'
 import { errorText } from '@/utils/errorText'
+import { humanSize } from '@/utils/format'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -49,6 +51,9 @@ const canExec = computed(() => userStore.hasPermission('file:file:exec'))
 const canChmod = computed(() => userStore.hasPermission('file:permission:update'))
 
 const roots = ref<string[]>([])
+const booting = ref(true)
+/** 根目录清单加载失败的原因：内联展示，避免整页只剩一个空表格。 */
+const bootError = ref('')
 const cwd = ref('')
 const data = ref<FileListResponse | null>(null)
 const loading = ref(false)
@@ -349,29 +354,25 @@ function isArchive(entry: FileEntry) {
   return !entry.isDir && /\.(zip|tar\.gz|tgz|tar\.bz2|tar)$/i.test(entry.name)
 }
 
-function humanSize(size: number) {
-  if (size < 1024) return `${size} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let v = size / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i += 1
-  }
-  return `${v.toFixed(1)} ${units[i]}`
-}
-
-function humanTime(sec: number) {
-  return new Date(sec * 1000).toLocaleString()
+/* mtime 是后端返回的 Unix 毫秒（model.FileEntry.Mtime），不能再乘 1000。 */
+function humanTime(ms: number) {
+  if (!ms) return '-'
+  return dayjs(ms).format('YYYY-MM-DD HH:mm:ss')
 }
 
 onMounted(async () => {
+  if (!canRead.value) {
+    booting.value = false
+    return
+  }
   try {
     const res = await fetchRoots()
     roots.value = res.allowRoots
     if (roots.value.length) await load(roots.value[0])
   } catch (e) {
-    reportError(e)
+    bootError.value = e instanceof BizError ? errorText(e.code, e.message) : t('common.requestFailed')
+  } finally {
+    booting.value = false
   }
 })
 </script>
@@ -381,6 +382,7 @@ onMounted(async () => {
     <template #extra>
       <a-space>
         <a-select
+          v-if="roots.length"
           v-model="cwd"
           :style="{ width: '200px' }"
           :aria-label="$t('file.rootSelect')"
@@ -389,6 +391,7 @@ onMounted(async () => {
           <a-option v-for="r in roots" :key="r" :value="r">{{ r }}</a-option>
         </a-select>
         <a-input-search
+          v-if="roots.length"
           v-model="keyword"
           allow-clear
           :placeholder="$t('file.searchPlaceholder')"
@@ -396,13 +399,22 @@ onMounted(async () => {
           @search="doSearch"
           @clear="load()"
         />
-        <a-button :loading="loading" @click="load()">
+        <a-button v-if="roots.length" :loading="loading" @click="load()">
           <template #icon><icon-refresh /></template>
         </a-button>
       </a-space>
     </template>
 
-    <a-space wrap :style="{ marginBottom: '12px' }">
+    <!-- 首屏四种情形各自有明确提示：加载中、无权限、接口失败、未配置白名单根目录 -->
+    <a-skeleton v-if="booting" animation>
+      <a-skeleton-line :rows="5" />
+    </a-skeleton>
+    <a-alert v-else-if="!canRead" type="info">{{ $t('file.noPermission') }}</a-alert>
+    <a-alert v-else-if="bootError" type="error">{{ bootError }}</a-alert>
+    <a-alert v-else-if="!roots.length" type="warning">{{ $t('file.notConfigured') }}</a-alert>
+
+    <template v-else>
+      <a-space wrap :style="{ marginBottom: '12px' }">
       <a-breadcrumb v-if="!searching">
         <a-breadcrumb-item v-for="c in crumbs" :key="c.path">
           <a-link @click="load(c.path)">{{ c.label }}</a-link>
@@ -523,6 +535,7 @@ onMounted(async () => {
         </a-table-column>
       </template>
     </a-table>
+    </template>
 
     <a-modal v-model:visible="dialog.visible" :title="dialogTitle" @ok="submitDialog">
       <a-form :model="dialog" layout="vertical">
