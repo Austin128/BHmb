@@ -1,0 +1,119 @@
+name: Release
+
+# 推 v* tag 即发布：交叉编译 → 校验产物 → 容器内真机安装演练 → 建 Release 并上传资产。
+# 安装演练不通过就不会发布，避免放出装不上的包。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（须已推送到仓库）"
+        required: true
+
+# gh release create 需要写内容的权限
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.24"
+  NODE_VERSION: "22"
+
+jobs:
+  release:
+    name: 打包 → 安装演练 → 发布
+    runs-on: ubuntu-latest
+    steps:
+      - name: 解析 tag
+        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >>"$GITHUB_ENV"
+
+      # fetch-depth 0：Makefile 用 git describe 取版本号，浅克隆会拿不到 tag
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 版本号必须与 tag 一致
+        run: |
+          version="$(git describe --tags --always --dirty)"
+          if [[ "$version" != "$TAG" ]]; then
+            echo "git describe 得到 [$version]，与 tag [$TAG] 不一致：tag 必须是 annotated 且指向本次提交" >&2
+            exit 1
+          fi
+
+      - name: 打包
+        run: make release
+
+      - name: 校验产物命名与内容
+        run: |
+          # install.sh 按 novapanel-<tag>-linux-<arch>.tar.gz + SHA256SUMS 下载，命名错了一键安装会直接失效
+          for arch in amd64 arm64; do
+            pkg="dist/novapanel-${TAG}-linux-${arch}.tar.gz"
+            test -f "$pkg" || { echo "缺少 $pkg" >&2; exit 1; }
+            for entry in ./bin/novapanel ./bin/novactl ./conf/panel.example.yaml \
+              ./scripts/install.sh ./scripts/bh ./scripts/uninstall.sh ./deploy/systemd/novapanel.service; do
+              tar -tzf "$pkg" | grep -qx "$entry" || { echo "$pkg 缺少 $entry" >&2; exit 1; }
+            done
+          done
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: 容器内真机安装演练（amd64 包）
+        run: NOVA_PKG="dist/novapanel-${TAG}-linux-amd64.tar.gz" ./scripts/install-verify.sh
+
+      - name: 生成发布说明
+        run: |
+          {
+            printf '## 安装\n\n'
+            printf '```bash\n'
+            printf 'curl -fsSL https://raw.githubusercontent.com/%s/main/scripts/install.sh | sudo bash\n' "$GITHUB_REPOSITORY"
+            printf '```\n\n'
+            printf '安装后用 `bh` 管理面板（等同宝塔的 `bt`）：`bh info` 看地址账号，`bh help` 看全部子命令。\n'
+            printf '离线安装：下载对应架构的 tar.gz，`NOVA_PKG=/path/pkg.tar.gz bash scripts/install.sh`。\n\n'
+            printf '要求 Linux + systemd，amd64 或 arm64；面板默认 34567 端口、自签证书，公网暴露前请限制来源 IP。\n\n'
+            printf '## 校验和\n\n```\n'
+            cat dist/SHA256SUMS
+            printf '```\n\n'
+            printf '## 发布前已验证\n\n'
+            printf '- 容器内真机演练：安装 → systemd 拉起 → 健康检查 → 用初始口令登录 → `bh` 子命令 → 改端口 → 重复安装升级 → `--purge` 卸载\n'
+            printf '- CI：go vet、竞态单测、service 覆盖率门槛、错误码一致性、迁移 up/down/up、认证与文件管理链路冒烟、前端类型检查与单测、govulncheck\n'
+          } >notes.md
+
+      - name: 建 Release 并上传资产
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" \
+            dist/novapanel-"$TAG"-linux-amd64.tar.gz \
+            dist/novapanel-"$TAG"-linux-arm64.tar.gz \
+            dist/SHA256SUMS \
+            --title "NovaPanel $TAG" \
+            --notes-file notes.md \
+            --verify-tag
+
+      - name: 校验一键安装能取到发布包
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Release 资产可见性有几秒延迟，重试几次
+          for _ in 1 2 3 4 5; do
+            code="$(curl -sL -o /dev/null -w '%{http_code}' \
+              "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/novapanel-$TAG-linux-amd64.tar.gz")"
+            [[ "$code" == "200" ]] && break
+            sleep 5
+          done
+          [[ "$code" == "200" ]] || { echo "发布包不可下载（HTTP $code）" >&2; exit 1; }

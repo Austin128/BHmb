@@ -50,9 +50,11 @@ conf/           配置示例
 curl -fsSL https://raw.githubusercontent.com/Austin128/BHmb/main/scripts/install.sh | sudo bash
 ```
 
-脚本按 GitHub Release → 本地包 → 源码构建的顺序取安装内容。**仓库目前还没有发布 Release**，
-所以在线安装会回落到源码构建：服务器上具备 `git`、Go 1.24、`pnpm`、`make` 时脚本会自动克隆仓库
-到临时目录构建，缺工具则会明确提示改用下面两种方式：
+脚本按 GitHub Release → 本地包 → 源码构建的顺序取安装内容，默认装最新 Release（amd64 / arm64，
+带 SHA256 校验），服务器不需要任何工具链。指定版本用 `NOVA_VERSION=v0.1.0`。
+
+取不到在线包时（例如无法访问 GitHub）会回落源码构建：具备 `git`、Go 1.24、`pnpm`、`make`
+时自动克隆仓库到临时目录构建，缺工具则明确提示改用下面两种方式：
 
 ```bash
 # 方式一：服务器上克隆后从源码安装（需 Go 1.24 + pnpm）
@@ -190,6 +192,8 @@ make migrate-test   # sqlite 迁移 up -> down -> up（设置 MYSQL_DSN / POSTGR
 make web-typecheck  # 前端类型检查
 make web-test       # 前端单测
 make smoke          # 真实启动面板，跑完整认证链路与内置 SPA
+make deploy-test    # 部署脚本单测（配置改写、systemd 渲染、curl | bash 管道执行）
+make install-verify # systemd 容器内真机演练：安装 → 登录 → bh → 升级 → 卸载（需 Docker）
 ```
 
 `make smoke` 覆盖：健康检查信封、登录下发令牌与 HttpOnly Cookie、匿名访问 401、
@@ -197,3 +201,14 @@ profile 权限与菜单、刷新轮换与旧令牌复用拒绝、文件读写与
 分片上传的断点续传 / 缺片 `400006` / 合并哈希校验 / 秒传 / 放弃会话、
 登出后令牌失效、SPA 首页与深链回落、
 未知 API 路由返回 JSON 404 信封。CI 工作流见 `.github/workflows/ci.yml`。
+
+## 发布
+
+推 `v*` tag 即触发 `.github/workflows/release.yml`：交叉编译 amd64/arm64 → 校验包内结构与
+SHA256SUMS → 在 systemd 容器里真机演练安装 → 建 Release 并上传资产 → 回验发布包可下载。
+安装演练不通过就不会发布。
+
+```bash
+git tag -a v0.1.1 -m "说明"    # 必须是 annotated tag，Makefile 用 git describe 取版本号
+git push origin v0.1.1
+```
