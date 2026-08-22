@@ -66,9 +66,16 @@ lan_ip() {
 
 svc() { systemctl "$1" "$SERVICE"; }
 
+# systemd 默认 10 秒内只允许启动 5 次，连续改几项配置就会被限流卡住
+# （报 "start request repeated too quickly"）。启动/重启前先清掉失败计数。
+svc_up() {
+  systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
+  systemctl "$1" "$SERVICE"
+}
+
 cmd_start() {
   need_root start
-  svc start && ok "已启动"
+  svc_up start && ok "已启动"
 }
 
 cmd_stop() {
@@ -78,7 +85,7 @@ cmd_stop() {
 
 cmd_restart() {
   need_root restart
-  svc restart && ok "已重启"
+  svc_up restart && ok "已重启"
 }
 
 cmd_reload() {
@@ -148,7 +155,7 @@ cmd_port() {
   set_conf_port "$CONF" "$port"
 
   open_firewall "$port"
-  svc restart && ok "端口已改为 $port 并重启"
+  svc_up restart && ok "端口已改为 $port 并重启"
   cmd_info
 }
 
@@ -163,6 +170,191 @@ open_firewall() {
   else
     warn "未检测到活动的 firewalld/ufw，如有云厂商安全组请手动放行 ${port}/tcp"
   fi
+}
+
+# 配置改完后的收尾：默认自动重启生效；批量改多项时可设 NOVA_NO_RESTART=1 最后统一重启
+restart_hint() {
+  if [[ "${NOVA_NO_RESTART:-0}" == "1" ]]; then
+    info "已跳过自动重启（NOVA_NO_RESTART=1），改动将在 bh restart 后生效"
+    return 0
+  fi
+  if systemctl is-active --quiet "$SERVICE"; then
+    svc_up restart && ok "已重启生效"
+  else
+    warn "服务当前未运行，改动将在 bh start 后生效"
+  fi
+}
+
+# 改顶层段内的标量键，只改该段第一处，避免误伤其它段的同名键
+set_conf_scalar() {
+  local conf="$1" section="$2" key="$3" value="$4"
+  awk -v sec="$section" -v k="$key" -v v="$value" '
+    $0 ~ "^"sec":[[:space:]]*$" { inside = 1; print; next }
+    /^[a-z_]+:[[:space:]]*$/ && $0 !~ "^"sec":" { inside = 0 }
+    inside && !done && $1 == k":" { sub(/:.*/, ": " v); done = 1 }
+    { print }
+  ' "$conf" >"$conf.tmp" && mv "$conf.tmp" "$conf"
+}
+
+# 改二级段内的标量键，例如 server.tls.enabled
+# 变量不能叫 sub：那是 awk 内建函数名，会直接语法错误
+set_conf_nested() {
+  local conf="$1" section="$2" subsec="$3" key="$4" value="$5"
+  awk -v sec="$section" -v sub2="$subsec" -v k="$key" -v v="$value" '
+    $0 ~ "^"sec":[[:space:]]*$" { inside = 1; print; next }
+    /^[a-z_]+:[[:space:]]*$/ && $0 !~ "^"sec":" { inside = 0; insub = 0 }
+    inside && $1 == sub2":" { insub = 1; print; next }
+    inside && insub && /^  [a-z_]+:/ { insub = 0 }
+    inside && insub && !done && $1 == k":" { sub(/:.*/, ": " v); done = 1 }
+    { print }
+  ' "$conf" >"$conf.tmp" && mv "$conf.tmp" "$conf"
+}
+
+cmd_enable() {
+  need_root enable
+  systemctl enable "$SERVICE" >/dev/null 2>&1 || die "设置开机自启失败"
+  ok "已设为开机自启"
+}
+
+cmd_disable() {
+  need_root disable
+  systemctl disable "$SERVICE" >/dev/null 2>&1 || die "关闭开机自启失败"
+  ok "已关闭开机自启"
+}
+
+cmd_host() {
+  need_root host
+  need_install
+  local host="${1:-}"
+  [[ -n "$host" ]] || die "用法：bh host <监听地址>，例如 0.0.0.0（全部网卡）或 127.0.0.1（仅本机）"
+  set_conf_scalar "$CONF" server host "$host"
+  ok "监听地址已改为 $host"
+  if [[ "$host" == "127.0.0.1" || "$host" == "localhost" ]]; then
+    warn "仅监听本机后需通过 SSH 隧道或反向代理访问面板"
+  fi
+  restart_hint
+}
+
+cmd_entrance() {
+  need_root entrance
+  need_install
+  local path="${1:-}"
+  [[ -n "$path" ]] || die "用法：bh entrance </安全入口路径|/>，例如 /nova_a1b2c3"
+  [[ "$path" == /* ]] || die "安全入口必须以 / 开头"
+  set_conf_scalar "$CONF" server entrance "$path"
+  if [[ "$path" == "/" ]]; then
+    ok "安全入口已恢复为根路径"
+  else
+    ok "安全入口已写入配置：${path}"
+  fi
+  warn "当前版本仅保存该配置，服务端路由尚未按安全入口限制访问"
+  restart_hint
+}
+
+cmd_ssl() {
+  need_root ssl
+  need_install
+  local action="${1:-}"
+  case "$action" in
+    on) set_conf_nested "$CONF" server tls enabled true && ok "已开启 HTTPS（证书缺失会自动生成自签证书）" ;;
+    off)
+      set_conf_nested "$CONF" server tls enabled false
+      ok "已关闭 HTTPS"
+      warn "明文 HTTP 会暴露口令与令牌，仅建议在内网或前置反代已终止 TLS 时使用"
+      ;;
+    *) die "用法：bh ssl on|off（当前：$(panel_scheme)）" ;;
+  esac
+  restart_hint
+}
+
+cmd_loglevel() {
+  need_root loglevel
+  need_install
+  local level="${1:-}"
+  case "$level" in
+    debug | info | warn | error) ;;
+    *) die "用法：bh loglevel debug|info|warn|error（当前：$(conf_get level log || echo 未知)）" ;;
+  esac
+  set_conf_scalar "$CONF" log level "$level"
+  ok "日志级别已改为 $level"
+  restart_hint
+}
+
+# ip_whitelist 是数组，单独处理；为空表示不限制来源
+whitelist_items() {
+  awk '
+    /^security:[[:space:]]*$/ { inside = 1; next }
+    /^[a-z_]+:[[:space:]]*$/ { inside = 0 }
+    inside && $1 == "ip_whitelist:" {
+      if ($2 ~ /^\[.*\]$/) { exit }   # 行内空数组
+      inlist = 1; next
+    }
+    inlist && /^[[:space:]]+-[[:space:]]*/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print; next }
+    inlist { exit }
+  ' "$CONF" 2>/dev/null || true
+}
+
+write_whitelist() {
+  local conf="$1" items="$2"
+  awk -v items="$items" '
+    /^security:[[:space:]]*$/ { inside = 1; print; next }
+    /^[a-z_]+:[[:space:]]*$/ && !/^security:/ { inside = 0 }
+    inside && $1 == "ip_whitelist:" {
+      if (items == "") { print "  ip_whitelist: []" } else {
+        print "  ip_whitelist:"
+        n = split(items, a, " ")
+        for (i = 1; i <= n; i++) print "    - " a[i]
+      }
+      skip = ($2 ~ /^\[.*\]$/) ? 0 : 1
+      next
+    }
+    skip && /^[[:space:]]+-[[:space:]]*/ { next }
+    skip { skip = 0 }
+    { print }
+  ' "$conf" >"$conf.tmp" && mv "$conf.tmp" "$conf"
+}
+
+cmd_whitelist() {
+  need_install
+  local action="${1:-list}" ip="${2:-}" current
+  current="$(whitelist_items | tr '\n' ' ' | sed 's/ *$//')"
+  case "$action" in
+    list | "")
+      if [[ -z "$current" ]]; then
+        info "IP 白名单：${C_WARN}未设置${C_OFF}"
+      else
+        info "IP 白名单（已写入配置）："
+        whitelist_items | sed 's/^/  - /'
+      fi
+      warn "当前版本仅校验并保存白名单，服务端尚未据此拦截请求；请先用防火墙限制来源"
+      ;;
+    add)
+      need_root whitelist add
+      [[ -n "$ip" ]] || die "用法：bh whitelist add <IP 或 CIDR>"
+      if grep -qx -- "$ip" <<<"$(whitelist_items)"; then die "$ip 已在白名单中"; fi
+      write_whitelist "$CONF" "$(printf '%s %s' "$current" "$ip" | sed 's/^ *//')"
+      ok "已加入白名单：$ip"
+      restart_hint
+      ;;
+    del | rm)
+      need_root whitelist del
+      [[ -n "$ip" ]] || die "用法：bh whitelist del <IP 或 CIDR>"
+      local left
+      left="$(whitelist_items | grep -vx "$ip" | tr '\n' ' ' | sed 's/ *$//' || true)"
+      [[ "$left" != "$current" ]] || die "$ip 不在白名单中"
+      write_whitelist "$CONF" "$left"
+      ok "已移出白名单：$ip"
+      if [[ -z "$left" ]]; then warn "白名单已空"; fi
+      restart_hint
+      ;;
+    clear)
+      need_root whitelist clear
+      write_whitelist "$CONF" ""
+      ok "已清空白名单"
+      restart_hint
+      ;;
+    *) die "用法：bh whitelist list|add <IP>|del <IP>|clear" ;;
+  esac
 }
 
 cmd_update() {
@@ -188,57 +380,475 @@ cmd_version() {
   "$PANEL" -version 2>/dev/null || "$CLI" version -c "$CONF"
 }
 
+cmd_confcheck() {
+  need_install
+  "$CLI" config check -c "$CONF" && ok "配置校验通过"
+}
+
+cmd_conf() {
+  need_root conf
+  need_install
+  local editor="${EDITOR:-}"
+  if [[ -z "$editor" ]]; then
+    for e in vim vi nano; do command -v "$e" >/dev/null 2>&1 && editor="$e" && break; done
+  fi
+  [[ -n "$editor" ]] || die "未找到编辑器，可设置 EDITOR 环境变量或直接编辑 $CONF"
+
+  cp "$CONF" "$CONF.bak"
+  "$editor" "$CONF"
+  if ! "$CLI" config check -c "$CONF" >/dev/null 2>&1; then
+    "$CLI" config check -c "$CONF" || true
+    mv "$CONF.bak" "$CONF"
+    die "配置校验失败，已回滚到修改前（备份 $CONF.bak 已还原）"
+  fi
+  rm -f "$CONF.bak"
+  ok "配置校验通过"
+  restart_hint
+}
+
+cmd_migrate() {
+  need_root migrate
+  need_install
+  local action="${1:-status}"
+  case "$action" in
+    status | up) "$CLI" migrate "$action" -c "$CONF" ;;
+    *) die "用法：bh migrate status|up（回滚请直接用 novactl migrate down，需显式确认）" ;;
+  esac
+}
+
+cert_files() {
+  awk '
+    /^[[:space:]]*tls:[[:space:]]*$/ { inside = 1; next }
+    inside && /^  [a-z_]+:/ { inside = 0 }
+    inside && $1 == "cert_file:" { cert = $2 }
+    inside && $1 == "key_file:" { key = $2 }
+    END { print cert; print key }
+  ' "$CONF" 2>/dev/null || true
+}
+
+cmd_cert() {
+  need_install
+  local action="${1:-info}" cert key
+  cert="$(cert_files | sed -n 1p)"
+  key="$(cert_files | sed -n 2p)"
+  case "$action" in
+    info | "")
+      info "证书文件：${cert:-未配置}"
+      info "私钥文件：${key:-未配置}"
+      [[ -f "$cert" ]] || {
+        warn "证书文件不存在，启动时会按 auto_self_signed 自动生成自签证书"
+        return 0
+      }
+      if command -v openssl >/dev/null 2>&1; then
+        info "签发主体：$(openssl x509 -in "$cert" -noout -subject 2>/dev/null | sed 's/^subject=//')"
+        info "签发机构：$(openssl x509 -in "$cert" -noout -issuer 2>/dev/null | sed 's/^issuer=//')"
+        info "有效期至：$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null | sed 's/^notAfter=//')"
+        if openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null 2>&1; then
+          ok "证书 7 天内不会过期"
+        else
+          warn "证书将在 7 天内过期或已过期，请尽快更换"
+        fi
+      else
+        warn "未安装 openssl，跳过证书详情解析"
+      fi
+      ;;
+    import)
+      need_root cert import
+      local src_cert="${2:-}" src_key="${3:-}"
+      [[ -f "$src_cert" && -f "$src_key" ]] ||
+        die "用法：bh cert import <证书文件.crt/pem> <私钥文件.key>"
+      if command -v openssl >/dev/null 2>&1; then
+        openssl x509 -in "$src_cert" -noout >/dev/null 2>&1 || die "证书文件不是有效的 PEM 证书"
+        # 证书与私钥必须匹配，否则重启后面板起不来
+        local cmod kmod
+        cmod="$(openssl x509 -in "$src_cert" -noout -modulus 2>/dev/null || true)"
+        kmod="$(openssl rsa -in "$src_key" -noout -modulus 2>/dev/null || true)"
+        if [[ -n "$cmod" && -n "$kmod" && "$cmod" != "$kmod" ]]; then
+          die "证书与私钥不匹配，已中止（未改动任何文件）"
+        fi
+      fi
+      install -m 644 "$src_cert" "$cert"
+      install -m 600 "$src_key" "$key"
+      ok "证书已导入：$cert"
+      restart_hint
+      ;;
+    *) die "用法：bh cert info|import <crt> <key>" ;;
+  esac
+}
+
+cmd_backup() {
+  need_root backup
+  need_install
+  local dir="${1:-$NOVA_HOME/backup}" stamp file
+  mkdir -p "$dir"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  file="$dir/novapanel-backup-$stamp.tar.gz"
+
+  # 数据库与主密钥是恢复的前提，配置一起打包；日志与备份目录本身不进包
+  tar -czf "$file" -C "$NOVA_HOME" \
+    --exclude='./logs' --exclude='./backup' \
+    conf data 2>/dev/null || die "打包失败：$file"
+  chmod 600 "$file"
+  ok "备份已生成：${file}（$(du -h "$file" | cut -f1)）"
+  warn "备份含主密钥与数据库，务必按机密文件保管"
+}
+
+# 校验备份包能否安全解包到 $NOVA_HOME；抽成函数便于单测
+# 不能写成 tar -tzf ... | grep -q：grep 命中即退出会让 tar 收到 SIGPIPE，
+# pipefail 下整条管道返回非 0，正常备份也会被判成损坏
+check_backup() {
+  local file="$1" entries
+  entries="$(tar -tzf "$file" 2>/dev/null)" || die "备份文件损坏或不是 tar.gz"
+  printf '%s\n' "$entries" | grep -q '^conf/' || die "备份内容异常：缺少 conf/ 目录"
+  # 解包会落到 $NOVA_HOME，含绝对路径或 ../ 的条目可能写到目录之外
+  if printf '%s\n' "$entries" | grep -qE '^/|(^|/)\.\.(/|$)'; then
+    die "备份包含绝对路径或上跳路径，拒绝解包：$file"
+  fi
+}
+
+cmd_restore() {
+  need_root restore
+  need_install
+  local file="${1:-}"
+  [[ -f "$file" ]] || die "用法：bh restore <备份文件.tar.gz>"
+  check_backup "$file"
+
+  warn "恢复会覆盖当前 conf 与 data（含数据库与主密钥）"
+  if [[ "${2:-}" != "-y" ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "确认继续？输入 yes 执行：" answer
+    elif [[ -r /dev/tty ]]; then
+      read -r -p "确认继续？输入 yes 执行：" answer </dev/tty
+    else
+      die "非交互环境请加 -y：bh restore <文件> -y"
+    fi
+    [[ "$answer" == "yes" ]] || die "已取消"
+  fi
+
+  local was_active=0 keep
+  if systemctl is-active --quiet "$SERVICE"; then
+    was_active=1
+    svc stop
+  fi
+  # 先把现状挪到 before-restore-*，恢复失败也能人工回退
+  keep="$NOVA_HOME/before-restore-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$keep"
+  cp -a "$NOVA_HOME/conf" "$keep/" 2>/dev/null || true
+  cp -a "$NOVA_HOME/data" "$keep/" 2>/dev/null || true
+  tar -xzf "$file" -C "$NOVA_HOME" || die "解包失败，原内容留存于 $keep"
+  ok "已恢复 conf 与 data（原内容备份在 ${keep}）"
+  if ((was_active == 1)); then
+    svc_up start && ok "服务已启动"
+  fi
+  cmd_info
+}
+
+cmd_cleanlog() {
+  need_root cleanlog
+  need_install
+  local days="${1:-7}"
+  [[ "$days" =~ ^[0-9]+$ ]] || die "用法：bh cleanlog [保留天数，默认 7]"
+  local dir
+  dir="$(conf_get dir log || echo "$NOVA_HOME/logs")"
+  local freed=0
+  if [[ -d "$dir" ]]; then
+    freed="$(find "$dir" -type f -name '*.log*' -mtime "+$days" -printf '%s\n' 2>/dev/null |
+      awk '{s+=$1} END {print s+0}')"
+    find "$dir" -type f -name '*.log*' -mtime "+$days" -delete 2>/dev/null || true
+    ok "已清理 $dir 中 $days 天前的日志（约 $((freed / 1024)) KB）"
+  else
+    warn "日志目录不存在：$dir"
+  fi
+  if command -v journalctl >/dev/null 2>&1; then
+    journalctl --vacuum-time="${days}d" >/dev/null 2>&1 && ok "systemd 日志已按 ${days}d 收缩"
+  fi
+}
+
+# 一次把常见故障点全查一遍：服务、端口、健康检查、证书、配置、迁移、磁盘
+cmd_check() {
+  need_install
+  local port scheme fails=0
+  port="$(panel_port)"
+  scheme="$(panel_scheme)"
+
+  info "${C_KEY}== 服务 ==${C_OFF}"
+  if systemctl is-active --quiet "$SERVICE"; then ok "systemd 服务 active"; else
+    warn "服务未运行（bh start 启动，bh log 看原因）"
+    fails=$((fails + 1))
+  fi
+  if systemctl is-enabled --quiet "$SERVICE" 2>/dev/null; then ok "已设为开机自启"; else
+    warn "未设开机自启（bh enable 开启）"
+  fi
+
+  info "${C_KEY}== 网络 ==${C_OFF}"
+  local listen=""
+  if command -v ss >/dev/null 2>&1; then
+    listen="$(ss -lntp 2>/dev/null | grep ":${port} " || true)"
+  elif command -v netstat >/dev/null 2>&1; then
+    listen="$(netstat -lntp 2>/dev/null | grep ":${port} " || true)"
+  fi
+  if [[ -n "$listen" ]]; then ok "端口 $port 正在监听"; else
+    warn "未检测到 $port 监听（可能服务未启动，或缺少 ss/netstat 无法检测）"
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    local code
+    code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
+      "${scheme}://127.0.0.1:${port}/api/v1/health" 2>/dev/null || true)"
+    if [[ "$code" == "200" ]]; then ok "健康检查 200"; else
+      warn "健康检查异常（HTTP ${code:-无响应}）"
+      fails=$((fails + 1))
+    fi
+  fi
+
+  info "${C_KEY}== 安全 ==${C_OFF}"
+  [[ "$scheme" == "https" ]] && ok "HTTPS 已开启" || warn "当前为明文 HTTP（bh ssl on 开启）"
+  local wl
+  wl="$(whitelist_items | wc -l | tr -d ' ')"
+  if [[ "$wl" -gt 0 ]]; then
+    info "IP 白名单已写入 $wl 条（服务端尚未拦截，依靠防火墙）"
+  else
+    info "IP 白名单未设置"
+  fi
+  local kperm
+  kperm="$(stat -c '%a' "$NOVA_HOME/conf/master.key" 2>/dev/null || echo "")"
+  if [[ "$kperm" == "600" ]]; then ok "master.key 权限 600"; else
+    warn "master.key 权限为 ${kperm:-缺失}，应为 600"
+    fails=$((fails + 1))
+  fi
+
+  info "${C_KEY}== 配置与数据 ==${C_OFF}"
+  if "$CLI" config check -c "$CONF" >/dev/null 2>&1; then ok "配置校验通过"; else
+    warn "配置校验失败（bh confcheck 看详情）"
+    fails=$((fails + 1))
+  fi
+  local pending
+  pending="$("$CLI" migrate status -c "$CONF" 2>/dev/null | grep -c '待应用' || true)"
+  [[ "${pending:-0}" -eq 0 ]] && ok "数据库迁移已是最新" ||
+    warn "有 $pending 个迁移待应用（bh migrate up）"
+  local dbpath
+  dbpath="$(conf_get path database || true)"
+  if [[ -n "$dbpath" && -f "$dbpath" ]]; then
+    info "数据库文件：${dbpath}（$(du -h "$dbpath" | cut -f1)）"
+  fi
+  info "磁盘占用：$(df -h "$NOVA_HOME" | awk 'NR==2 {print $3"/"$2"（剩余 "$4"）"}')"
+
+  if ((fails == 0)); then
+    ok "自检完成，未发现问题"
+  else
+    warn "自检完成，$fails 项需要处理"
+    return 1
+  fi
+}
+
+cmd_users() {
+  need_root users
+  need_install
+  "$CLI" user list -c "$CONF"
+}
+
+cmd_unlock() {
+  need_root unlock
+  need_install
+  local user="${1:-admin}"
+  "$CLI" user unlock -u "$user" -c "$CONF"
+}
+
+cmd_2fa() {
+  need_root 2fa
+  need_install
+  local action="${1:-}" user="${2:-admin}"
+  case "$action" in
+    off)
+      "$CLI" user 2fa off -u "$user" -c "$CONF"
+      warn "二次验证已关闭，安全性下降，建议登录后重新绑定"
+      ;;
+    *) die "用法：bh 2fa off [用户名]（默认 admin；开启需在面板内绑定动态码）" ;;
+  esac
+}
+
+cmd_sessions() {
+  need_root sessions
+  need_install
+  local user="${1:-}"
+  if [[ -n "$user" ]]; then
+    "$CLI" session list -u "$user" -c "$CONF"
+  else
+    "$CLI" session list -c "$CONF"
+  fi
+}
+
+cmd_kick() {
+  need_root kick
+  need_install
+  local target="${1:-}"
+  case "$target" in
+    "" | -h | --help) die "用法：bh kick <用户名>|--all（吊销会话，强制重新登录）" ;;
+    --all | -all | all) "$CLI" session revoke -all -c "$CONF" ;;
+    *) "$CLI" session revoke -u "$target" -c "$CONF" ;;
+  esac
+}
+
 cmd_help() {
   cat <<'EOF'
-bh —— NovaPanel 管理命令
+bh —— NovaPanel 管理命令（不带参数进入交互菜单）
 
-  bh                 进入交互菜单
-  bh start           启动面板
-  bh stop            停止面板
-  bh restart         重启面板
-  bh reload          重载配置（不中断连接）
-  bh status          查看服务状态
-  bh log [行数]      查看最近日志（默认 200 行）
-  bh logf            实时跟踪日志
-  bh info            显示面板地址、账号与关键路径
-  bh passwd [用户]   重置口令（默认 admin，随机生成并打印一次）
-  bh port <端口>     修改面板端口并放行防火墙
-  bh update          升级到最新版本
-  bh uninstall       卸载面板（默认保留 data 目录）
-  bh version         打印版本
-  bh help            显示本帮助
+服务
+  bh start                             启动面板
+  bh stop                              停止面板
+  bh restart                           重启面板
+  bh reload                            重载配置（不中断连接）
+  bh status                            查看 systemd 状态
+  bh enable                            设为开机自启
+  bh disable                           关闭开机自启
+  bh log [行数]                        查看最近日志（默认 200 行）
+  bh logf                              实时跟踪日志
+
+信息与诊断
+  bh info                              面板地址、账号与关键路径
+  bh check                             一键自检：服务、端口、健康、证书、配置、迁移、磁盘
+  bh version                           打印版本
+  bh cert [info]                       查看证书主体与有效期
+  bh confcheck                         校验配置文件
+
+账号与安全
+  bh passwd [用户]                     重置口令（默认 admin，随机生成并只打印一次）
+  bh users                             列出账号、状态、二次验证与最近登录
+  bh unlock [用户]                     解除登录失败锁定并清零失败计数
+  bh 2fa off [用户]                    关闭该账号的二次验证
+  bh sessions [用户]                   列出最近 100 个登录会话
+  bh kick <用户>|--all                 吊销会话，强制重新登录
+  bh whitelist list|add|del|clear      IP 白名单（仅写入配置，服务端尚未拦截）
+  bh ssl on|off                        开启 / 关闭 HTTPS
+  bh port <端口>                       修改面板端口并放行防火墙
+  bh host <地址>                       修改监听地址（0.0.0.0 / 127.0.0.1）
+  bh entrance </路径|/>                写入安全入口（路由尚未生效）
+
+维护
+  bh conf                              编辑配置，校验失败自动回滚
+  bh loglevel debug|info|warn|error    修改日志级别
+  bh cleanlog [保留天数]               清理面板日志与 systemd 日志（默认 7 天）
+  bh backup [目录]                     备份 conf 与 data（含主密钥，按机密保管）
+  bh restore <备份文件> [-y]           从备份恢复
+  bh migrate status|up                 查看 / 执行数据库迁移
+  bh cert import <crt> <key>           导入受信证书
+  bh update                            升级到最新版本
+  bh uninstall [-y] [--purge]          卸载面板（默认保留 data 目录）
+  bh help                              显示本帮助
 EOF
 }
 
 menu() {
-  local choice
+  local choice arg arg2
   while true; do
-    printf '\n%sNovaPanel 管理菜单%s（NOVA_HOME=%s）\n' "$C_KEY" "$C_OFF" "$NOVA_HOME"
-    systemctl is-active --quiet "$SERVICE" && printf '状态：%s运行中%s\n' "$C_OK" "$C_OFF" ||
-      printf '状态：%s未运行%s\n' "$C_WARN" "$C_OFF"
+    printf '\n%s================ NovaPanel 管理菜单 ================%s\n' "$C_KEY" "$C_OFF"
+    if systemctl is-active --quiet "$SERVICE"; then
+      printf '状态：%s运行中%s   ' "$C_OK" "$C_OFF"
+    else
+      printf '状态：%s未运行%s   ' "$C_WARN" "$C_OFF"
+    fi
+    printf '端口：%s   协议：%s   目录：%s\n' "$(panel_port)" "$(panel_scheme)" "$NOVA_HOME"
     cat <<'EOF'
-  1) 启动面板          6) 重置 admin 口令
-  2) 停止面板          7) 修改面板端口
-  3) 重启面板          8) 升级面板
-  4) 查看状态          9) 卸载面板
-  5) 查看日志          0) 退出
+  (1)  启动面板                  (11) 重置 admin 口令
+  (2)  停止面板                  (12) 账号列表
+  (3)  重启面板                  (13) 解除账号锁定
+  (4)  重载配置                  (14) 关闭二次验证
+  (5)  查看状态                  (15) 会话列表
+  (6)  查看日志                  (16) 强制下线（吊销会话）
+  (7)  实时日志                  (17) IP 白名单管理
+  (8)  面板信息                  (18) 开启 / 关闭 HTTPS
+  (9)  一键自检                  (19) 修改面板端口
+  (10) 开机自启开关              (20) 修改安全入口
+  (21) 编辑配置文件              (26) 备份 conf 与 data
+  (22) 校验配置文件              (27) 从备份恢复
+  (23) 修改日志级别              (28) 升级面板
+  (24) 清理日志                  (29) 卸载面板
+  (25) 证书信息                  (30) 数据库迁移
+  (0)  退出
 EOF
-    read -r -p "请输入序号：" choice
+    read -r -p "请输入命令编号：" choice
     case "$choice" in
       1) cmd_start ;;
       2) cmd_stop ;;
       3) cmd_restart ;;
-      4) cmd_status ;;
-      5) cmd_log 200 ;;
-      6) cmd_passwd admin ;;
-      7)
-        read -r -p "新端口：" p
-        cmd_port "$p"
+      4) cmd_reload ;;
+      5) cmd_status ;;
+      6) cmd_log 200 ;;
+      7) cmd_logf ;;
+      8) cmd_info ;;
+      9) cmd_check || true ;;
+      10)
+        read -r -p "开机自启 on/off：" arg
+        if [[ "$arg" == "on" ]]; then cmd_enable; else cmd_disable; fi
         ;;
-      8) cmd_update ;;
-      9) cmd_uninstall ;;
+      11) cmd_passwd admin ;;
+      12) cmd_users ;;
+      13)
+        read -r -p "用户名（回车默认 admin）：" arg
+        cmd_unlock "${arg:-admin}"
+        ;;
+      14)
+        read -r -p "用户名（回车默认 admin）：" arg
+        cmd_2fa off "${arg:-admin}"
+        ;;
+      15)
+        read -r -p "用户名（回车列出全部）：" arg
+        cmd_sessions "$arg"
+        ;;
+      16)
+        read -r -p "用户名（输入 all 吊销全部）：" arg
+        if [[ "$arg" == "all" ]]; then cmd_kick --all; else cmd_kick "$arg"; fi
+        ;;
+      17)
+        cmd_whitelist list
+        read -r -p "动作 add/del/clear（回车返回）：" arg
+        case "$arg" in
+          add | del)
+            read -r -p "IP 或 CIDR：" arg2
+            cmd_whitelist "$arg" "$arg2"
+            ;;
+          clear) cmd_whitelist clear ;;
+          *) : ;;
+        esac
+        ;;
+      18)
+        read -r -p "HTTPS on/off：" arg
+        cmd_ssl "$arg"
+        ;;
+      19)
+        read -r -p "新端口：" arg
+        cmd_port "$arg"
+        ;;
+      20)
+        read -r -p "安全入口（如 /nova_a1b2c3，恢复默认输入 /）：" arg
+        cmd_entrance "$arg"
+        ;;
+      21) cmd_conf ;;
+      22) cmd_confcheck ;;
+      23)
+        read -r -p "日志级别 debug/info/warn/error：" arg
+        cmd_loglevel "$arg"
+        ;;
+      24)
+        read -r -p "保留天数（回车默认 7）：" arg
+        cmd_cleanlog "${arg:-7}"
+        ;;
+      25) cmd_cert info ;;
+      26)
+        read -r -p "备份目录（回车默认 $NOVA_HOME/backup）：" arg
+        cmd_backup "${arg:-$NOVA_HOME/backup}"
+        ;;
+      27)
+        read -r -p "备份文件路径：" arg
+        cmd_restore "$arg"
+        ;;
+      28) cmd_update ;;
+      29) cmd_uninstall ;;
+      30)
+        read -r -p "动作 status/up（回车默认 status）：" arg
+        cmd_migrate "${arg:-status}"
+        ;;
       0 | q | Q) exit 0 ;;
-      i | info) cmd_info ;;
+      h | help) cmd_help ;;
       *) warn "无效选项：$choice" ;;
     esac
   done
@@ -248,17 +858,40 @@ main() {
   local sub="${1:-}"
   [[ $# -gt 0 ]] && shift || true
   case "$sub" in
-    "") cmd_info; menu ;;
+    "")
+      cmd_info
+      menu
+      ;;
     start) cmd_start ;;
     stop) cmd_stop ;;
     restart) cmd_restart ;;
     reload) cmd_reload ;;
     status) cmd_status ;;
+    enable) cmd_enable ;;
+    disable) cmd_disable ;;
     log) cmd_log "$@" ;;
     logf) cmd_logf ;;
     info) cmd_info ;;
+    check | doctor) cmd_check ;;
     passwd) cmd_passwd "$@" ;;
+    users) cmd_users ;;
+    unlock) cmd_unlock "$@" ;;
+    2fa) cmd_2fa "$@" ;;
+    sessions) cmd_sessions "$@" ;;
+    kick) cmd_kick "$@" ;;
+    whitelist) cmd_whitelist "$@" ;;
+    ssl) cmd_ssl "$@" ;;
     port) cmd_port "$@" ;;
+    host) cmd_host "$@" ;;
+    entrance) cmd_entrance "$@" ;;
+    conf | edit) cmd_conf ;;
+    confcheck) cmd_confcheck ;;
+    loglevel) cmd_loglevel "$@" ;;
+    cleanlog) cmd_cleanlog "$@" ;;
+    backup) cmd_backup "$@" ;;
+    restore) cmd_restore "$@" ;;
+    migrate) cmd_migrate "$@" ;;
+    cert) cmd_cert "$@" ;;
     update | upgrade) cmd_update ;;
     uninstall) cmd_uninstall "$@" ;;
     version | -v | --version) cmd_version ;;
