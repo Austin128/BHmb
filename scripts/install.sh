@@ -270,6 +270,8 @@ clear_password_env() {
 
 start_service() {
   step "启动面板"
+  # 短时间内多次重启（升级、连续改配置）会撞上 systemd 启动限流，先清失败计数
+  systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
   systemctl restart "$SERVICE"
 
   local scheme="https" i
@@ -330,8 +332,8 @@ summary() {
   printf '管理命令： %sbh%s（等同宝塔的 bt，直接运行进入菜单，bh help 看全部子命令）\n' "$C_KEY" "$C_OFF"
   printf '安装目录： %s\n' "$NOVA_HOME"
   printf '\n'
-  warn "面板默认监听 0.0.0.0 并使用自签证书：浏览器会提示证书不受信；生产环境请换受信证书，并用安全组或 security.ip_whitelist 限制来源 IP"
-  warn "主密钥 $NOVA_HOME/conf/master.key 丢失将导致所有会话失效，请纳入备份"
+  warn "面板默认监听 0.0.0.0 并使用自签证书：浏览器会提示证书不受信；生产环境请换受信证书，并用安全组或主机防火墙限制来源 IP"
+  warn "主密钥 $NOVA_HOME/conf/master.key 丢失将导致所有会话失效，请纳入备份（bh backup）"
   printf '\n'
 }
 
