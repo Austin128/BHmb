@@ -499,7 +499,7 @@ func TestProfileForNonSuperUser(t *testing.T) {
 	assert.Equal(t, model.DataScopeAll, profile.Roles[0].DataScope)
 	assert.ElementsMatch(t, rbac.CodesOfRole(model.RoleOps), profile.Permissions)
 	assert.NotContains(t, profile.Permissions, model.PermissionAll)
-	assert.Equal(t, []string{"dashboard", "user", "ops"}, profile.Menus)
+	assert.Equal(t, []string{"dashboard", "user", "ops", "file"}, profile.Menus)
 	assert.Empty(t, profile.NodeScope, "空数组表示可见全部节点")
 }
 

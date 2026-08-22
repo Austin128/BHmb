@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +31,8 @@ import (
 	"github.com/novapanel/novapanel/internal/repository/seed"
 	"github.com/novapanel/novapanel/internal/security"
 	"github.com/novapanel/novapanel/internal/service/auth"
+	filesvc "github.com/novapanel/novapanel/internal/service/file"
+	"github.com/novapanel/novapanel/internal/service/file/pathguard"
 	"github.com/novapanel/novapanel/migrations"
 )
 
@@ -42,6 +45,8 @@ type app struct {
 	tokens   *security.TokenIssuer
 	sessions repository.SessionRepository
 	authMW   middleware.AuthDeps
+	// fileRoot 为文件管理测试的唯一白名单根，限定在临时目录内。
+	fileRoot string
 }
 
 // appOption 用于按需替换装配依赖，默认场景保持 newApp(t) 原样调用。
@@ -112,9 +117,27 @@ func newApp(t *testing.T, opts ...appOption) *app {
 		Revokes:    revokes,
 		Principals: middleware.NewPrincipalStore(users, roles),
 	}
+	// 文件管理测试只开放临时目录，避免测试触及宿主真实路径
+	fileRoot := filepath.Join(t.TempDir(), "www")
+	require.NoError(t, os.MkdirAll(fileRoot, 0o755))
+	if real, err := filepath.EvalSymlinks(fileRoot); err == nil {
+		fileRoot = real // macOS 的 /var 是符号链接，守卫返回的是解析后路径
+	}
+	fileSvc, err := filesvc.New(pathguard.New(pathguard.Config{
+		AllowRoots: []string{fileRoot},
+		DenyPaths:  []string{filepath.Join(fileRoot, "secret")},
+	}), filesvc.Config{
+		MaxEditSize:   1 << 20,
+		MaxUploadSize: 1 << 20,
+		// 分片会话不落在白名单目录内，测试里也隔离到各自的临时目录
+		UploadTempDir: filepath.Join(filepath.Dir(fileRoot), "upload-tmp"),
+	})
+	require.NoError(t, err)
+
 	engine, err := v1.NewEngine(v1.Options{
 		Auth:   handler.NewAuth(svc, false), // 测试走 HTTP，不设置 Secure
 		Health: handler.NewHealth(db, handler.BuildInfo{Version: "test"}, time.Now()),
+		File:   handler.NewFile(fileSvc),
 		AuthMW: authMW,
 	})
 	require.NoError(t, err)
@@ -125,7 +148,7 @@ func newApp(t *testing.T, opts ...appOption) *app {
 		middleware.RequirePermission("user:user:create"),
 		func(c *gin.Context) { response.OK(c, gin.H{"ok": true}) })
 
-	return &app{handlerT: engine, db: db, revokes: revokes, tokens: tokens, sessions: sessions, authMW: authMW}
+	return &app{handlerT: engine, db: db, revokes: revokes, tokens: tokens, sessions: sessions, authMW: authMW, fileRoot: fileRoot}
 }
 
 type envelope struct {
@@ -475,18 +498,10 @@ func TestTraceAndRequestIDHandling(t *testing.T) {
 	assert.NotEqual(t, first.TraceID, second.TraceID)
 }
 
-func TestRequirePermission(t *testing.T) {
-	a := newApp(t)
-
-	// 超管持通配权限，直接放行
-	superToken, _ := a.login(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/test/perm", nil)
-	req.Header.Set("Authorization", "Bearer "+superToken)
-	rec, env := a.do(t, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Zero(t, env.Code)
-
-	// 只读访客缺少 user:user:create
+// readonlyToken 落一个绑定内置 readonly 角色的用户并签发 accessToken，
+// 用于验证「已登录但缺权限」这条分支。
+func (a *app) readonlyToken(t *testing.T) string {
+	t.Helper()
 	now := time.Now().UTC()
 	viewer := model.SysUser{
 		Base:         model.Base{ID: 80001, CreatedAt: now, UpdatedAt: now, TenantID: rbac.DefaultTenantID},
@@ -508,9 +523,23 @@ func TestRequirePermission(t *testing.T) {
 	token, _, err := a.tokens.Sign(viewer.ID, viewer.TenantID, 80003, jti,
 		[]string{model.RoleReadonly}, viewer.CreatedAt, now)
 	require.NoError(t, err)
+	return token
+}
 
+func TestRequirePermission(t *testing.T) {
+	a := newApp(t)
+
+	// 超管持通配权限，直接放行
+	superToken, _ := a.login(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/test/perm", nil)
+	req.Header.Set("Authorization", "Bearer "+superToken)
+	rec, env := a.do(t, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Zero(t, env.Code)
+
+	// 只读访客缺少 user:user:create
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/test/perm", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+a.readonlyToken(t))
 	rec, env = a.do(t, req)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	assert.Equal(t, errs.CodeForbidden, env.Code)

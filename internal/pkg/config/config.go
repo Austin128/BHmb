@@ -18,6 +18,7 @@ type Config struct {
 	KV       KVConfig       `mapstructure:"kv"`
 	Agent    AgentConfig    `mapstructure:"agent"`
 	Security SecurityConfig `mapstructure:"security"`
+	File     FileConfig     `mapstructure:"file"`
 	Monitor  MonitorConfig  `mapstructure:"monitor"`
 	Log      LogConfig      `mapstructure:"log"`
 	Runtime  RuntimeConfig  `mapstructure:"runtime"`
@@ -146,6 +147,31 @@ type LogConfig struct {
 	AuditRetentionDays int    `mapstructure:"audit_retention_days"`
 }
 
+// FileConfig 为文件管理的路径安全与大小限制配置（docs/08 8.3.2）。
+// 判定优先级：deny_paths > deny_write_paths > allow_roots > 默认拒绝。
+type FileConfig struct {
+	// AllowRoots 为放行的根目录前缀，为空时文件模块拒绝一切路径。
+	AllowRoots []string `mapstructure:"allow_roots"`
+	// DenyPaths 读写全禁，优先于白名单。
+	DenyPaths []string `mapstructure:"deny_paths"`
+	// DenyWritePaths 可读不可写。
+	DenyWritePaths []string `mapstructure:"deny_write_paths"`
+	// FollowSymlink 为真时允许软链指向白名单外，默认关闭以防逃逸。
+	FollowSymlink bool `mapstructure:"follow_symlink"`
+	MaxPathLen    int  `mapstructure:"max_path_len"`
+	// MaxEditSizeMB 为在线编辑（读取与保存文本）的大小上限。
+	MaxEditSizeMB int `mapstructure:"max_edit_size_mb"`
+	// MaxUploadSizeMB 为单文件上传上限。
+	MaxUploadSizeMB int `mapstructure:"max_upload_size_mb"`
+	// MaxListEntries 为单次列目录返回的最大条目数，防止超大目录打满内存。
+	MaxListEntries int `mapstructure:"max_list_entries"`
+	// MaxSearchResults 为搜索结果上限。
+	MaxSearchResults int `mapstructure:"max_search_results"`
+	// UploadTempDir 存放分片上传的分片与会话元数据，为空时取系统临时目录下的
+	// novapanel-upload。该目录由面板自管，不参与 allow_roots 白名单判定。
+	UploadTempDir string `mapstructure:"upload_temp_dir"`
+}
+
 // RuntimeConfig 为并发与限流配置。
 type RuntimeConfig struct {
 	TaskPoolSize       int `mapstructure:"task_pool_size"`
@@ -253,6 +279,23 @@ func setDefaults(v *viper.Viper) {
 		"security.command_blacklist_enabled": true,
 		"security.terminal_record_enabled":   true,
 		"security.dangerous_action_reauth":   true,
+
+		// 文件管理的默认放行范围：站点与备份根、面板自身、家目录与临时目录。
+		// 默认不含 /etc 等系统目录，需要时由管理员显式追加。
+		"file.allow_roots": []string{"/www", "/opt/novapanel", "/home", "/root", "/tmp"},
+		"file.deny_paths": []string{
+			"/proc", "/sys", "/dev", "/run", "/boot",
+			"/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/sudoers.d", "/etc/ssh",
+			"/opt/novapanel/conf/master.key", "/opt/novapanel/conf/certs", "/opt/novapanel/data",
+		},
+		"file.deny_write_paths":   []string{"/etc/passwd", "/etc/group", "/etc/fstab", "/etc/systemd"},
+		"file.follow_symlink":     false,
+		"file.max_path_len":       4096,
+		"file.max_edit_size_mb":   4,
+		"file.max_upload_size_mb": 2048,
+		"file.max_list_entries":   5000,
+		"file.max_search_results": 1000,
+		"file.upload_temp_dir":    "",
 
 		"monitor.enabled":              true,
 		"monitor.collect_interval":     "15s",

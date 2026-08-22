@@ -61,4 +61,19 @@ const (
 	CodeDataScopeDenied     = 120011
 	CodeOldPasswordWrong    = 120012
 	CodeLastSuperAdmin      = 120013
+
+	// 文件 40xxxx
+	CodePathEscape         = 400001
+	CodeFileNotFound       = 400002
+	CodeFileExists         = 400003
+	CodeFilePermission     = 400004
+	CodeFileTooLarge       = 400005
+	CodeChunkChecksum      = 400006
+	CodeUploadExpired      = 400007
+	CodeArchiveUnsupported = 400008
+	CodeArchiveCorrupt     = 400009
+	CodeNotUTF8            = 400010
+	CodeFileChanged        = 400011
+	CodeProtectedPath      = 400012
+	CodeDiskFull           = 400013
 )

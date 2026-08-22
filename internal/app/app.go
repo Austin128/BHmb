@@ -29,6 +29,8 @@ import (
 	"github.com/novapanel/novapanel/internal/repository/seed"
 	"github.com/novapanel/novapanel/internal/security"
 	"github.com/novapanel/novapanel/internal/service/auth"
+	filesvc "github.com/novapanel/novapanel/internal/service/file"
+	"github.com/novapanel/novapanel/internal/service/file/pathguard"
 	"github.com/novapanel/novapanel/internal/web"
 	"github.com/novapanel/novapanel/migrations"
 )
@@ -204,6 +206,30 @@ func (a *App) initHTTP() error {
 			Principals: middleware.NewPrincipalStore(users, roles),
 		},
 	}
+	// 文件管理：白名单为空说明未配置可访问范围，此时整个文件模块不注册，
+	// 而不是放行整个根文件系统
+	if len(a.cfg.File.AllowRoots) == 0 {
+		logx.L().Warn("未配置 file.allow_roots，文件管理模块已禁用")
+	} else {
+		fileSvc, err := filesvc.New(pathguard.New(pathguard.Config{
+			AllowRoots:     a.cfg.File.AllowRoots,
+			DenyPaths:      a.cfg.File.DenyPaths,
+			DenyWritePaths: a.cfg.File.DenyWritePaths,
+			FollowSymlink:  a.cfg.File.FollowSymlink,
+			MaxPathLen:     a.cfg.File.MaxPathLen,
+		}), filesvc.Config{
+			MaxEditSize:      int64(a.cfg.File.MaxEditSizeMB) << 20,
+			MaxUploadSize:    int64(a.cfg.File.MaxUploadSizeMB) << 20,
+			MaxListEntries:   a.cfg.File.MaxListEntries,
+			MaxSearchResults: a.cfg.File.MaxSearchResults,
+			UploadTempDir:    a.cfg.File.UploadTempDir,
+		})
+		if err != nil {
+			return err
+		}
+		opts.File = handler.NewFile(fileSvc)
+	}
+
 	if web.Available() {
 		opts.StaticFS = web.MustFS()
 	} else {

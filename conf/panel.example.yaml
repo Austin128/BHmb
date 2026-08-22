@@ -85,6 +85,45 @@ runtime:
   global_rate_limit: 2000
   user_write_rate_limit: 60
 
+# 文件管理白名单。优先级：deny_paths > deny_write_paths > allow_roots > 默认拒绝。
+# allow_roots 为空时整个文件管理模块禁用，不会退化为放行根目录。
+file:
+  allow_roots:
+    - /www
+    - /opt/novapanel
+    - /home
+    - /root
+    - /tmp
+  deny_paths:
+    - /proc
+    - /sys
+    - /dev
+    - /run
+    - /boot
+    - /etc/shadow
+    - /etc/gshadow
+    - /etc/sudoers
+    - /etc/sudoers.d
+    - /etc/ssh
+    - /opt/novapanel/conf/master.key
+    - /opt/novapanel/conf/certs
+    - /opt/novapanel/data
+  deny_write_paths:
+    - /etc/passwd
+    - /etc/group
+    - /etc/fstab
+    - /etc/systemd
+  # 为 true 时允许符号链接指向白名单之外，默认关闭
+  follow_symlink: false
+  max_path_len: 4096
+  max_edit_size_mb: 4
+  max_upload_size_mb: 2048
+  max_list_entries: 5000
+  max_search_results: 1000
+  # 分片上传的临时目录（分片与会话元数据），为空取系统临时目录下的 novapanel-upload。
+  # 合并期间该目录会占用与上传文件等量的磁盘，建议放在数据盘。
+  upload_temp_dir: ""
+
 # 以下模块尚未在当前里程碑实现，保留键位以免后续配置迁移；
 # 修改它们暂不会改变运行行为。
 agent:

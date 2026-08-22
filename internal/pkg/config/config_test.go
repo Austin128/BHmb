@@ -76,6 +76,17 @@ func TestLoadEnvOverride(t *testing.T) {
 	assert.False(t, cfg.Database.AutoMigrate)
 }
 
+// TestLoadFileAllowRootsFromEnv 固化「逗号分隔的环境变量可覆盖列表型配置」，
+// scripts/auth-smoke.sh 用 NOVA_FILE_ALLOW_ROOTS 把文件模块限制在临时目录内。
+func TestLoadFileAllowRootsFromEnv(t *testing.T) {
+	path := writeConfig(t, "")
+	t.Setenv("NOVA_FILE_ALLOW_ROOTS", "/tmp/a,/tmp/b")
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/tmp/a", "/tmp/b"}, cfg.File.AllowRoots)
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "not-exists.yaml"))
 	require.Error(t, err)

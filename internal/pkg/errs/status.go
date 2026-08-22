@@ -59,6 +59,20 @@ var statusMap = map[int]int{
 	CodeDataScopeDenied:     http.StatusForbidden,
 	CodeOldPasswordWrong:    http.StatusBadRequest,
 	CodeLastSuperAdmin:      http.StatusConflict,
+
+	CodePathEscape:         http.StatusForbidden,
+	CodeFileNotFound:       http.StatusNotFound,
+	CodeFileExists:         http.StatusConflict,
+	CodeFilePermission:     http.StatusForbidden,
+	CodeFileTooLarge:       http.StatusRequestEntityTooLarge,
+	CodeChunkChecksum:      http.StatusBadRequest,
+	CodeUploadExpired:      http.StatusConflict,
+	CodeArchiveUnsupported: http.StatusBadRequest,
+	CodeArchiveCorrupt:     http.StatusBadRequest,
+	CodeNotUTF8:            http.StatusBadRequest,
+	CodeFileChanged:        http.StatusConflict,
+	CodeProtectedPath:      http.StatusForbidden,
+	CodeDiskFull:           http.StatusInsufficientStorage,
 }
 
 // Codes 返回所有已登记的错误码，供一致性校验与 golden 测试使用。

@@ -22,6 +22,8 @@ const BasePath = "/api/v1"
 type Options struct {
 	Auth   *handler.Auth
 	Health *handler.Health
+	// File 为主机文件管理处理器；为空时不注册文件路由（未配置白名单等场景）。
+	File *handler.File
 	// AuthMW 为认证中间件依赖，受保护路由使用。
 	AuthMW middleware.AuthDeps
 	// StaticFS 为已构建的前端静态资源；为空时不注册 SPA 路由（例如纯 API 部署）。
@@ -84,6 +86,53 @@ func Register(e *gin.Engine, o Options) {
 		authed.POST("/auth/logout", o.Auth.Logout)
 		authed.GET("/auth/profile", o.Auth.Profile)
 	}
+	registerFile(authed, o.File)
+}
+
+// registerFile 注册文件管理路由。读、写、删、执行分开鉴权，
+// 权限点定义见 internal/rbac/permission_def.go。
+func registerFile(authed *gin.RouterGroup, h *handler.File) {
+	if h == nil {
+		return
+	}
+	g := authed.Group("/file")
+
+	read := g.Group("", middleware.RequirePermission("file:file:read"))
+	read.GET("/stat", h.Stat)
+	read.GET("/content", h.Content)
+	read.GET("/download", h.Download)
+	read.GET("/du", h.Du)
+
+	list := g.Group("", middleware.RequirePermission("file:file:list"))
+	list.GET("/roots", h.Roots)
+	list.GET("/list", h.List)
+	list.GET("/search", h.Search)
+
+	create := g.Group("", middleware.RequirePermission("file:file:create"))
+	create.POST("/dir", h.CreateDir)
+	create.POST("/file", h.CreateFile)
+	create.POST("/upload", h.Upload)
+	// 分片上传（含续传查询与放弃）同属「新建文件」语义：
+	// abort 只清理服务端自管的分片会话，不触碰用户文件，故不要求 delete 权限
+	create.POST("/upload/init", h.UploadInit)
+	create.POST("/upload/chunk", h.UploadChunk)
+	create.POST("/upload/complete", h.UploadComplete)
+	create.GET("/upload/status", h.UploadStatus)
+	create.DELETE("/upload/:uploadId", h.UploadAbort)
+
+	update := g.Group("", middleware.RequirePermission("file:file:update"))
+	update.PUT("/content", h.Save)
+	update.POST("/rename", h.Rename)
+	update.POST("/move", h.Move)
+	update.POST("/copy", h.Copy)
+
+	g.DELETE("/items", middleware.RequirePermission("file:file:delete"), h.Delete)
+
+	exec := g.Group("", middleware.RequirePermission("file:file:exec"))
+	exec.POST("/compress", h.Compress)
+	exec.POST("/decompress", h.Decompress)
+
+	g.PUT("/permission", middleware.RequirePermission("file:permission:update"), h.Permission)
 }
 
 // noRoute 处理未匹配路由：API 前缀返回 100003 信封，其余交给 SPA。

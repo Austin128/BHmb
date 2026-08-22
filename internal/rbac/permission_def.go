@@ -61,9 +61,13 @@ var (
 	rAdminOps  = []string{model.RoleAdmin, model.RoleOps}
 	rReadTeam  = []string{model.RoleAdmin, model.RoleAuditor, model.RoleReadonly}
 	rReadOps   = []string{model.RoleAdmin, model.RoleOps, model.RoleAuditor, model.RoleReadonly}
+	// rWriteDev 为含开发者的写权限组合，用于网站目录与运行环境相关的文件操作。
+	rWriteDev = []string{model.RoleAdmin, model.RoleOps, model.RoleDeveloper}
+	// rReadDev 为含开发者的读权限组合。
+	rReadDev = []string{model.RoleAdmin, model.RoleOps, model.RoleDeveloper, model.RoleAuditor, model.RoleReadonly}
 )
 
-// Permissions 为 M0 覆盖的权限点（dashboard / user / ops 三个模块）。
+// Permissions 为 M0 与文件管理（M1）覆盖的权限点。
 // 其余模块随对应里程碑追加，id 顺延分配，已分配的 id 不得复用。
 var Permissions = []Permission{
 	{ID: 1001, Code: "dashboard:overview:read", Name: "查看总览", Module: "dashboard", Resource: "overview", Action: "read", Roles: rAll},
@@ -91,6 +95,14 @@ var Permissions = []Permission{
 	{ID: 1021, Code: "ops:task:delete", Name: "取消/清理任务", Module: "ops", Resource: "task", Action: "delete", Roles: rAdminOps},
 	{ID: 1022, Code: "ops:tenant:list", Name: "租户列表", Module: "ops", Resource: "tenant", Action: "list", Roles: rReadTeam},
 	{ID: 1023, Code: "ops:upgrade:read", Name: "查看版本与更新", Module: "ops", Resource: "upgrade", Action: "read", Roles: rReadOps},
+
+	{ID: 1024, Code: "file:file:list", Name: "浏览目录", Module: "file", Resource: "file", Action: "list", Roles: rReadDev},
+	{ID: 1025, Code: "file:file:read", Name: "读取与下载文件", Module: "file", Resource: "file", Action: "read", Roles: rReadDev},
+	{ID: 1026, Code: "file:file:create", Name: "新建与上传文件", Module: "file", Resource: "file", Action: "create", Roles: rWriteDev},
+	{ID: 1027, Code: "file:file:update", Name: "编辑与移动文件", Module: "file", Resource: "file", Action: "update", Roles: rWriteDev},
+	{ID: 1028, Code: "file:file:delete", Name: "删除文件", Module: "file", Resource: "file", Action: "delete", Sensitive: true, Roles: rWriteDev},
+	{ID: 1029, Code: "file:file:exec", Name: "压缩与解压", Module: "file", Resource: "file", Action: "exec", Roles: rWriteDev},
+	{ID: 1030, Code: "file:permission:update", Name: "修改文件权限与属主", Module: "file", Resource: "permission", Action: "update", Sensitive: true, Roles: rAdminOps},
 }
 
 // PermissionCodes 返回全部权限点标识。
