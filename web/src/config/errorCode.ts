@@ -16,6 +16,19 @@ export const ERROR_MESSAGE_KEYS: Record<number, string> = {
   110021: 'errcode.e110021',
   120002: 'errcode.e120002',
   120003: 'errcode.e120003',
+  400001: 'errcode.e400001',
+  400002: 'errcode.e400002',
+  400003: 'errcode.e400003',
+  400004: 'errcode.e400004',
+  400005: 'errcode.e400005',
+  400006: 'errcode.e400006',
+  400007: 'errcode.e400007',
+  400008: 'errcode.e400008',
+  400009: 'errcode.e400009',
+  400010: 'errcode.e400010',
+  400011: 'errcode.e400011',
+  400012: 'errcode.e400012',
+  400013: 'errcode.e400013',
 }
 
 /** 这些错误码由页面自行处理，不弹全局提示。 */

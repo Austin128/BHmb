@@ -31,6 +31,12 @@ const routes: RouteRecordRaw[] = [
         meta: { module: 'user', titleKey: 'menu.user', permission: 'user:user:list' },
       },
       {
+        path: 'file',
+        name: 'FileManager',
+        component: () => import('@/views/file/index.vue'),
+        meta: { module: 'file', titleKey: 'menu.file', permission: 'file:file:list' },
+      },
+      {
         path: 'ops',
         name: 'Ops',
         component: () => import('@/views/ops/index.vue'),

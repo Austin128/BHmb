@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { IconDashboard, IconSettings, IconUserGroup } from '@arco-design/web-vue/es/icon'
+import { IconDashboard, IconFolder, IconSettings, IconUserGroup } from '@arco-design/web-vue/es/icon'
 import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -22,6 +22,7 @@ const { t } = useI18n()
 const ICONS: Record<string, Component> = {
   dashboard: IconDashboard,
   user: IconUserGroup,
+  file: IconFolder,
   ops: IconSettings,
 }
 

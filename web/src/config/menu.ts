@@ -14,6 +14,7 @@ export interface MenuMeta {
 export const MENU_META: MenuMeta[] = [
   { module: 'dashboard', name: 'Dashboard', path: '/dashboard', titleKey: 'menu.dashboard' },
   { module: 'user', name: 'UserCenter', path: '/user', titleKey: 'menu.user' },
+  { module: 'file', name: 'FileManager', path: '/file', titleKey: 'menu.file' },
   { module: 'ops', name: 'Ops', path: '/ops', titleKey: 'menu.ops' },
 ]
 
