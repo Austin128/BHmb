@@ -101,7 +101,7 @@ prepare_payload() {
   elif download_release "$payload"; then
     :
   else
-    warn "在线发布包不可用，尝试从源码构建"
+    warn "在线发布包不可用（网络不通、GitHub 限流或该架构无包），尝试从源码构建"
     build_from_source "$payload"
   fi
 
@@ -110,12 +110,34 @@ prepare_payload() {
   PAYLOAD="$payload"
 }
 
+# 解析最新 tag。api.github.com 对匿名请求限流很紧（常见 403），
+# 因此优先用 github.com/<repo>/releases/latest 的 302 重定向，把 API 当兜底。
+resolve_latest_tag() {
+  local loc tag=""
+  if command -v curl >/dev/null 2>&1; then
+    loc="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+      "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+  else
+    loc="$(wget -S --spider -O /dev/null "https://github.com/${REPO}/releases/latest" 2>&1 |
+      awk '/[Ll]ocation:/ {print $2}' | tail -1 || true)"
+  fi
+  if [[ "$loc" == *"/releases/tag/"* ]]; then
+    tag="${loc##*/releases/tag/}"
+    tag="${tag%%[!A-Za-z0-9._-]*}"
+  fi
+  if [[ -z "$tag" ]] &&
+    fetch "https://api.github.com/repos/${REPO}/releases/latest" "$WORK_DIR/latest.json" 2>/dev/null; then
+    tag="$(grep -m1 '"tag_name"' "$WORK_DIR/latest.json" | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  fi
+  [[ -n "$tag" ]] || return 1
+  printf '%s' "$tag"
+}
+
 download_release() {
   local payload="$1" tag="$NOVA_VERSION" url pkg
   step "获取发布包"
   if [[ -z "$tag" ]]; then
-    fetch "https://api.github.com/repos/${REPO}/releases/latest" "$WORK_DIR/latest.json" 2>/dev/null || return 1
-    tag="$(grep -m1 '"tag_name"' "$WORK_DIR/latest.json" | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+    tag="$(resolve_latest_tag)" || return 1
   fi
   [[ -n "$tag" ]] || return 1
 

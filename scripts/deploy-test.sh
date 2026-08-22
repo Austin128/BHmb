@@ -241,6 +241,25 @@ done
 sourced="$(bash -c "source '$ROOT/scripts/install.sh'; type -t main" 2>&1 || true)"
 t_eq "install.sh 被 source 时只导出函数" "function" "$sourced"
 
+echo "== 发布包版本解析 =="
+
+# 只靠 api.github.com 解析 latest 会被匿名限流打成 403，进而回落到源码构建，
+# 而多数新机器没有 Go/pnpm，等于装不上。必须优先走 github.com 的 302 重定向。
+install_text="$(cat "$ROOT/scripts/install.sh")"
+t_contains "定义了 resolve_latest_tag" "$install_text" "resolve_latest_tag()"
+t_contains "download_release 调用 resolve_latest_tag" "$install_text" "tag=\"\$(resolve_latest_tag)\""
+t_contains "优先用 releases/latest 重定向" "$install_text" "/releases/latest"
+t_contains "解析重定向落地的 tag 路径" "$install_text" "/releases/tag/"
+t_contains "API 仍作为兜底保留" "$install_text" "api.github.com/repos/"
+
+resolve_body="$(sed -n '/^resolve_latest_tag() {/,/^}/p' "$ROOT/scripts/install.sh")"
+t_contains "无 curl 时用 wget 读 Location" "$resolve_body" "wget"
+t_contains "包名按 tag 与架构拼装" "$install_text" "novapanel-\${tag}-linux-\${ARCH}.tar.gz"
+
+# 端口检测：没装 ss/netstat 时不能报成「服务可能未启动」
+check_body="$(sed -n '/^cmd_check() {/,/^}/p' "$ROOT/scripts/bh")"
+t_contains "缺探测工具时跳过端口检查" "$check_body" "跳过端口检测"
+
 echo "== 变量引用与中文标点 =="
 
 # bash 会把紧跟变量名的 UTF-8 字节当成变量名的一部分：

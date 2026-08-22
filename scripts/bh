@@ -581,14 +581,20 @@ cmd_check() {
   fi
 
   info "${C_KEY}== 网络 ==${C_OFF}"
-  local listen=""
+  local listen="" probe=""
   if command -v ss >/dev/null 2>&1; then
+    probe=ss
     listen="$(ss -lntp 2>/dev/null | grep ":${port} " || true)"
   elif command -v netstat >/dev/null 2>&1; then
+    probe=netstat
     listen="$(netstat -lntp 2>/dev/null | grep ":${port} " || true)"
   fi
-  if [[ -n "$listen" ]]; then ok "端口 $port 正在监听"; else
-    warn "未检测到 $port 监听（可能服务未启动，或缺少 ss/netstat 无法检测）"
+  if [[ -z "$probe" ]]; then
+    info "未安装 ss/netstat，跳过端口检测（改由下面的健康检查判断）"
+  elif [[ -n "$listen" ]]; then
+    ok "端口 $port 正在监听"
+  else
+    warn "未检测到 $port 监听，服务可能未启动"
   fi
   if command -v curl >/dev/null 2>&1; then
     local code
