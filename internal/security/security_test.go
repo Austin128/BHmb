@@ -52,7 +52,7 @@ func TestCheckStrength(t *testing.T) {
 		ok       bool
 	}{
 		{"合规三类", "Novapanel1!", true},
-		{"合规无符号", "NovaPanel2026", true},
+		{"合规无符号", "Qingyuan2026", true},
 		{"太短", "Ab1!", false},
 		{"仅小写数字", "novapanel1234", false},
 		{"常见弱口令", "Administrator", false},

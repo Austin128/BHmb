@@ -21,7 +21,7 @@ fi
 # SAN 同时覆盖 localhost 与回环地址，浏览器与 curl 才能按主机名校验
 openssl req -x509 -newkey rsa:2048 -sha256 -days "$DAYS" -nodes \
   -keyout "$KEY" -out "$CRT" \
-  -subj "/C=CN/O=NovaPanel Dev/CN=$CN" \
+  -subj "/C=CN/O=Qingyuan Panel Dev/CN=$CN" \
   -addext "subjectAltName=DNS:localhost,DNS:$CN,IP:127.0.0.1,IP:::1" \
   -addext "keyUsage=digitalSignature,keyEncipherment" \
   -addext "extendedKeyUsage=serverAuth" >/dev/null 2>&1

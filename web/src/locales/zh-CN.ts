@@ -52,7 +52,7 @@ export default {
     empty: '暂无可访问的模块',
   },
   login: {
-    title: '登录 NovaPanel',
+    title: '登录青垣面板',
     subtitle: '轻量、安全的服务器运维面板',
     username: '用户名',
     usernamePlaceholder: '请输入用户名',

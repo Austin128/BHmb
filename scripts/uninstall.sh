@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NovaPanel 卸载脚本。默认保留 data/ 与 conf/，加 --purge 才彻底删除。
+# 青垣面板卸载脚本。默认保留 data/ 与 conf/，加 --purge 才彻底删除。
 #   bh uninstall            停服务、删程序，保留数据与配置
 #   bh uninstall --purge    连数据、配置、主密钥一起删除（不可恢复）
 #   bh uninstall -y         跳过确认
@@ -37,7 +37,7 @@ warn() { printf '%s!%s %s\n' "$C_WARN" "$C_OFF" "$*" >&2; }
 if [[ "$PURGE" == "1" ]]; then
   warn "--purge 会删除 $NOVA_HOME 下的全部内容，包括数据库、配置与主密钥，且无法恢复"
 else
-  warn "将停止并移除 NovaPanel 程序，保留 $NOVA_HOME/{data,conf}"
+  warn "将停止并移除青垣面板程序，保留 $NOVA_HOME/{data,conf}"
 fi
 
 if [[ "$ASSUME_YES" != "1" ]]; then

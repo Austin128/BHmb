@@ -52,7 +52,7 @@ export default {
     empty: 'No accessible modules',
   },
   login: {
-    title: 'Sign in to NovaPanel',
+    title: 'Sign in to Qingyuan Panel',
     subtitle: 'A lightweight and secure server control panel',
     username: 'Username',
     usernamePlaceholder: 'Enter your username',

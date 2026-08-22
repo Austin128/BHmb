@@ -126,7 +126,7 @@ CONF="$WORK/c.yaml"
 t_eq "空白名单读出为空" "" "$(whitelist_items)"
 write_whitelist "$CONF" "10.0.0.1 192.168.1.0/24"
 t_eq "写入两条后可读回" "10.0.0.1 192.168.1.0/24" "$(whitelist_items | tr '\n' ' ' | sed 's/ *$//')"
-t_eq "写入白名单不破坏后续键" "NovaPanel" \
+t_eq "写入白名单不破坏后续键" "Qingyuan" \
   "$(awk '/^security:[[:space:]]*$/{i=1;next} i && $1=="totp_issuer:"{print $2; exit}' "$CONF")"
 write_whitelist "$CONF" ""
 t_eq "清空后回到行内空数组" "" "$(whitelist_items)"

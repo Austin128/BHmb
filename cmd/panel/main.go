@@ -1,4 +1,4 @@
-// Command panel 是 NovaPanel 控制面主进程。
+// Command panel 是青垣面板控制面主进程。
 // 只解析命令行参数与信号，全部装配逻辑在 internal/app。
 package main
 

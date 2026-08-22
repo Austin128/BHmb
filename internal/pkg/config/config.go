@@ -274,7 +274,7 @@ func setDefaults(v *viper.Viper) {
 		"security.login_fail_limit":          5,
 		"security.login_lock_duration":       "15m",
 		"security.ip_whitelist":              []string{},
-		"security.totp_issuer":               "NovaPanel",
+		"security.totp_issuer":               "Qingyuan",
 		"security.session_max_per_user":      5,
 		"security.command_blacklist_enabled": true,
 		"security.terminal_record_enabled":   true,

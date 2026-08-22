@@ -8,7 +8,7 @@ const int = (v: string | undefined, fallback: number): number => {
 }
 
 export const ENV = {
-  appTitle: import.meta.env.VITE_APP_TITLE || 'NovaPanel',
+  appTitle: import.meta.env.VITE_APP_TITLE || '青垣面板',
   publicPath: import.meta.env.VITE_PUBLIC_PATH || '/',
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   wsBaseUrl: import.meta.env.VITE_WS_BASE_URL || '/api/v1/ws',

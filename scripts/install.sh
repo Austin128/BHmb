@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NovaPanel 一键安装脚本（Linux + systemd）。
+# 青垣面板一键安装脚本（Linux + systemd）。
 #
 #   curl -fsSL https://raw.githubusercontent.com/Austin128/BHmb/main/scripts/install.sh | sudo bash
 #
@@ -321,7 +321,7 @@ summary() {
   ip="$(lan_ip)"
   [[ -n "$ip" ]] || ip="<服务器IP>"
 
-  printf '\n%s================ NovaPanel 安装完成 ================%s\n' "$C_OK" "$C_OFF"
+  printf '\n%s================ 青垣面板安装完成 ================%s\n' "$C_OK" "$C_OFF"
   printf '面板地址： %s%s://%s:%s/%s\n' "$C_KEY" "${SCHEME:-https}" "$ip" "$NOVA_PORT" "$C_OFF"
   printf '管理账号： %sadmin%s\n' "$C_KEY" "$C_OFF"
   if [[ -n "${ADMIN_PASSWORD:-}" ]]; then

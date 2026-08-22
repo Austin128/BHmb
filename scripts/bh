@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NovaPanel 管理命令（对应宝塔的 bt）。
+# 青垣面板管理命令（对应宝塔的 bt）。
 # 不带参数进入交互菜单，也可直接用子命令：bh start / bh info / bh passwd ...
 # 安装位置：/usr/local/bin/bh，实际程序位于 ${NOVA_HOME}（默认 /opt/novapanel）。
 set -euo pipefail
@@ -30,7 +30,7 @@ need_root() {
 }
 
 need_install() {
-  [[ -x "$PANEL" ]] || die "未找到 ${PANEL}，NovaPanel 可能未安装"
+  [[ -x "$PANEL" ]] || die "未找到 ${PANEL}，青垣面板可能未安装"
 }
 
 # 只在 server: 段内取键值，避免误取 redis/database 段的同名键
@@ -690,7 +690,7 @@ cmd_kick() {
 
 cmd_help() {
   cat <<'EOF'
-bh —— NovaPanel 管理命令（不带参数进入交互菜单）
+bh —— 青垣面板管理命令（不带参数进入交互菜单）
 
 服务
   bh start                             启动面板
@@ -740,7 +740,7 @@ EOF
 menu() {
   local choice arg arg2
   while true; do
-    printf '\n%s================ NovaPanel 管理菜单 ================%s\n' "$C_KEY" "$C_OFF"
+    printf '\n%s================ 青垣面板管理菜单 ================%s\n' "$C_KEY" "$C_OFF"
     if systemctl is-active --quiet "$SERVICE"; then
       printf '状态：%s运行中%s   ' "$C_OK" "$C_OFF"
     else

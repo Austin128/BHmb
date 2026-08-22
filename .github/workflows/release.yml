@@ -102,7 +102,7 @@ jobs:
             dist/novapanel-"$TAG"-linux-amd64.tar.gz \
             dist/novapanel-"$TAG"-linux-arm64.tar.gz \
             dist/SHA256SUMS \
-            --title "NovaPanel $TAG" \
+            --title "青垣面板 $TAG" \
             --notes-file notes.md \
             --verify-tag
 

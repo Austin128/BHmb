@@ -11,7 +11,7 @@ import (
 	"github.com/novapanel/novapanel/internal/pkg/errs"
 )
 
-// 口令策略（规范文档未固化数值，此处为 NovaPanel 默认，改动需同步 docs/internal/conventions.md）：
+// 口令策略（规范文档未固化数值，此处为青垣面板默认，改动需同步 docs/internal/conventions.md）：
 // 最短 10 位、最长 72 位（bcrypt 上限），且至少覆盖 小写/大写/数字/符号 四类中的三类。
 const (
 	PasswordMinLen = 10

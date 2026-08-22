@@ -1,4 +1,4 @@
-# NovaPanel 控制面配置示例
+# 青垣面板控制面配置示例
 # 复制为 conf/panel.yaml 后按需修改；所有键均可用 NOVA_ 前缀环境变量覆盖，
 # 规则为「大写 + 点/连字符替换为下划线」，例如：
 #   NOVA_SERVER_PORT=8443
@@ -61,7 +61,7 @@ security:
   login_fail_limit: 5
   login_lock_duration: 15m
   ip_whitelist: []
-  totp_issuer: NovaPanel
+  totp_issuer: Qingyuan
   session_max_per_user: 5
   command_blacklist_enabled: true
   terminal_record_enabled: true

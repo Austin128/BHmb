@@ -1,5 +1,5 @@
 [Unit]
-Description=NovaPanel 控制面
+Description=青垣面板控制面
 Documentation=https://github.com/Austin128/BHmb
 After=network-online.target
 Wants=network-online.target

@@ -49,8 +49,8 @@ func EnsureSelfSignedCert(certFile, keyFile string, hosts []string) (bool, error
 	tmpl := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			Organization: []string{"NovaPanel"},
-			CommonName:   "NovaPanel Self-Signed",
+			Organization: []string{"Qingyuan Panel"},
+			CommonName:   "Qingyuan Panel Self-Signed",
 		},
 		// 回拨 1 小时，容忍机器间的时钟偏差
 		NotBefore:             now.Add(-time.Hour),

@@ -1,4 +1,4 @@
-// Command novactl 是 NovaPanel 的运维命令行工具：迁移、口令重置与配置校验。
+// Command novactl 是青垣面板的运维命令行工具：迁移、口令重置与配置校验。
 // 它与面板进程共享同一套 internal 包，保证行为一致。
 package main
 
