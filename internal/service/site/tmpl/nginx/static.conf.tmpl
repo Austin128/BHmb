@@ -1,0 +1,46 @@
+{{/* 静态站 vhost 模板。$ 开头的变量是 Nginx 变量，与 Go 模板互不冲突。 */ -}}
+# 本文件由青垣面板自动生成，站点：{{ .Name }}（静态站）
+# 生成时间：{{ .GeneratedAt }}
+# 手工修改会在下次通过面板保存站点时被覆盖，请在面板「配置」中编辑。
+server {
+{{- range .ListenPorts }}
+    listen {{ . }};
+    listen [::]:{{ . }};
+{{- end }}
+    server_name {{ joinStr .ServerNames " " }};
+
+    root {{ .Root }};
+    index {{ joinStr .IndexFiles " " }};
+{{- if .AutoIndex }}
+
+    # 目录浏览已开启，目录内文件会被公开列出
+    autoindex on;
+    autoindex_exact_size off;
+    autoindex_localtime on;
+{{- end }}
+{{- if not .RewriteInclude }}
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+{{- end }}
+
+    # 放行 ACME 校验目录，其余隐藏文件一律拒绝
+    location ^~ /.well-known/acme-challenge/ {
+        allow all;
+    }
+    location ~ /\. {
+        deny all;
+    }
+{{ template "settings" . }}
+{{- if .AccessLogEnabled }}
+
+    access_log {{ .AccessLog }};
+{{- else }}
+
+    access_log off;
+{{- end }}
+{{- if .ErrorLogEnabled }}
+    error_log {{ .ErrorLog }};
+{{- end }}
+}

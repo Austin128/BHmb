@@ -1,0 +1,47 @@
+{{/* 反向代理站 vhost 模板。 */ -}}
+# 本文件由青垣面板自动生成，站点：{{ .Name }}（反向代理）
+# 生成时间：{{ .GeneratedAt }}
+# 手工修改会在下次通过面板保存站点时被覆盖，请在面板「配置」中编辑。
+server {
+{{- range .ListenPorts }}
+    listen {{ . }};
+    listen [::]:{{ . }};
+{{- end }}
+    server_name {{ joinStr .ServerNames " " }};
+
+    # 反代站也保留根目录，便于放置 ACME 校验文件与静态兜底页
+    root {{ .Root }};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root {{ .Root }};
+        allow all;
+    }
+
+    location / {
+        proxy_pass {{ .ProxyTarget }};
+        proxy_set_header Host {{ .ProxyHostHeader }};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+{{- if .ProxyWebSocket }}
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+{{- end }}
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_buffering off;
+    }
+{{ template "settings" . }}
+{{- if .AccessLogEnabled }}
+
+    access_log {{ .AccessLog }};
+{{- else }}
+
+    access_log off;
+{{- end }}
+{{- if .ErrorLogEnabled }}
+    error_log {{ .ErrorLog }};
+{{- end }}
+}

@@ -1,0 +1,71 @@
+{{/*
+  站点设置片段。被 static/proxy 模板 include，保证两类站点的设置渲染结果一致。
+  所有条件都由服务层预计算成字段，这里只做「非空即输出」。
+*/}}
+{{- define "settings" -}}
+{{- if .Redirects }}
+    # 重定向规则
+{{- range .Redirects }}
+{{- if .Remark }}
+    # {{ .Remark }}
+{{- end }}
+    {{ .Statement }}
+{{- end }}
+{{- end }}
+{{- if .LimitRate }}
+
+    # 带宽限速
+    limit_rate {{ .LimitRate }};
+{{- if .LimitRateAfter }}
+    limit_rate_after {{ .LimitRateAfter }};
+{{- end }}
+{{- end }}
+{{- if .DenyUAPattern }}
+
+    # User-Agent 拦截
+    if ($http_user_agent ~* "{{ .DenyUAPattern }}") {
+        return 403;
+    }
+{{- end }}
+{{- if or .AllowIPs .DenyIPs }}
+
+    # 访问限制
+{{- range .DenyIPs }}
+    deny {{ . }};
+{{- end }}
+{{- range .AllowIPs }}
+    allow {{ . }};
+{{- end }}
+{{- if .DenyAllOthers }}
+    deny all;
+{{- end }}
+{{- end }}
+{{- with .AntiLeech }}
+
+    # 防盗链
+    location ~* \.({{ .ExtPattern }})$ {
+        valid_referers {{ joinStr .ValidReferers " " }};
+        if ($invalid_referer) {
+            {{ .ReturnDirective }}
+        }
+{{- if .Expires }}
+        expires {{ .Expires }};
+        add_header Cache-Control "public";
+{{- end }}
+    }
+{{- end }}
+{{- if and .CacheExtPattern .CacheExpires }}
+
+    # 静态资源缓存
+    location ~* \.({{ .CacheExtPattern }})$ {
+        expires {{ .CacheExpires }};
+        add_header Cache-Control "public";
+        access_log off;
+    }
+{{- end }}
+{{- if .RewriteInclude }}
+
+    # 伪静态
+    include {{ .RewriteInclude }};
+{{- end }}
+{{- end -}}
