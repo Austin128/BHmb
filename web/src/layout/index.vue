@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { IconDashboard, IconFolder, IconSettings, IconUserGroup } from '@arco-design/web-vue/es/icon'
+import {
+  IconApps,
+  IconDashboard,
+  IconFolder,
+  IconSettings,
+  IconUserGroup,
+} from '@arco-design/web-vue/es/icon'
 import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -22,6 +28,7 @@ const { t } = useI18n()
 const ICONS: Record<string, Component> = {
   dashboard: IconDashboard,
   user: IconUserGroup,
+  website: IconApps,
   file: IconFolder,
   ops: IconSettings,
 }
@@ -33,7 +40,13 @@ const menus = computed(() =>
     .filter((m): m is (typeof MENU_META)[number] => Boolean(m)),
 )
 
-const activeKey = computed(() => [route.path])
+// 高亮按路由 meta.module 定位菜单项：详情页路径（如 /website/sites/1）
+// 不等于菜单 path，直接用 route.path 会丢掉父级选中态。
+const activeKey = computed(() => {
+  const module = route.meta.module as string | undefined
+  const hit = menus.value.find((m) => m.module === module)
+  return [hit?.path ?? route.path]
+})
 
 function onMenuClick(key: string) {
   if (key !== route.path) void router.push(key)

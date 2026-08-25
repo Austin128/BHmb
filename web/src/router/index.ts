@@ -31,6 +31,19 @@ const routes: RouteRecordRaw[] = [
         meta: { module: 'user', titleKey: 'menu.user', permission: 'user:user:list' },
       },
       {
+        path: 'website',
+        name: 'Website',
+        component: () => import('@/views/website/index.vue'),
+        meta: { module: 'website', titleKey: 'menu.website', permission: 'website:site:list' },
+      },
+      {
+        path: 'website/sites/:id',
+        name: 'WebsiteDetail',
+        component: () => import('@/views/website/detail.vue'),
+        // 详情不出现在菜单里，module 仍填 website 以便布局高亮父级入口
+        meta: { module: 'website', titleKey: 'website.detailTitle', permission: 'website:site:read' },
+      },
+      {
         path: 'file',
         name: 'FileManager',
         component: () => import('@/views/file/index.vue'),
