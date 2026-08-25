@@ -124,6 +124,25 @@ file:
   # 合并期间该目录会占用与上传文件等量的磁盘，建议放在数据盘。
   upload_temp_dir: ""
 
+# 建站模块。面板只写 vhost_dir 下的站点配置，宿主机 Web 服务主配置需要
+# include 该目录，站点才会真正生效；未检测到 Nginx/OpenResty 时面板仍可启动，
+# 但创建站点会被拒绝并给出原因，不会留下「看起来已上线」的假记录。
+website:
+  enabled: true
+  # auto | nginx | openresty；auto 按可执行文件探测
+  server_type: auto
+  # 留空时在 PATH 与常见安装位置探测
+  nginx_bin: ""
+  vhost_dir: /opt/novapanel/data/vhost
+  www_root: /www/wwwroot
+  log_dir: /www/wwwlogs
+  # 留空时使用 <nginx_bin> -s reload
+  reload_cmd: ""
+  # 站点目录属主，留空则不改属主
+  owner: ""
+  # 每个站点保留的配置版本数
+  backup_keep: 20
+
 # 以下模块尚未在当前里程碑实现，保留键位以免后续配置迁移；
 # 修改它们暂不会改变运行行为。
 agent:

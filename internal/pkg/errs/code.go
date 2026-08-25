@@ -76,4 +76,16 @@ const (
 	CodeFileChanged        = 400011
 	CodeProtectedPath      = 400012
 	CodeDiskFull           = 400013
+
+	// 网站 30xxxx（docs/05 5.5.3）
+	CodeDomainExists        = 300001
+	CodeDomainInvalid       = 300002
+	CodeSiteNotFound        = 300003
+	CodeSiteRootConflict    = 300004
+	CodeNginxTestFailed     = 300005
+	CodePortOccupied        = 300006
+	CodeRewriteInvalid      = 300007
+	CodeSiteStopped         = 300008
+	CodeUpstreamUnreachable = 300009
+	CodeRuntimeInUse        = 300010
 )

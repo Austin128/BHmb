@@ -33,7 +33,9 @@ import (
 	"github.com/novapanel/novapanel/internal/service/auth"
 	filesvc "github.com/novapanel/novapanel/internal/service/file"
 	"github.com/novapanel/novapanel/internal/service/file/pathguard"
+	sitesvc "github.com/novapanel/novapanel/internal/service/site"
 	"github.com/novapanel/novapanel/internal/service/sysinfo"
+	"github.com/novapanel/novapanel/internal/service/webserver"
 	"github.com/novapanel/novapanel/migrations"
 )
 
@@ -48,14 +50,35 @@ type app struct {
 	authMW   middleware.AuthDeps
 	// fileRoot 为文件管理测试的唯一白名单根，限定在临时目录内。
 	fileRoot string
+	// websiteVhost 为网站测试的 vhost 目录，隔离在临时目录内。
+	websiteVhost string
+	// websiteRoot 为站点根目录的父目录，用于断言目录创建与回收。
+	websiteRoot string
+	// websiteLogDir 为站点日志目录，用于断言日志读取与清空。
+	websiteLogDir string
 }
 
 // appOption 用于按需替换装配依赖，默认场景保持 newApp(t) 原样调用。
-type appOption func(*auth.Deps)
+type appOption func(*appOptions)
+
+// appOptions 汇总可替换的装配项。
+type appOptions struct {
+	authMutators []func(*auth.Deps)
+	// websiteRunner 不为空时，网站模块会拿到一个可用的假 Web 服务，
+	// 用于覆盖创建成功、租户隔离等正向路径。
+	websiteRunner webserver.Runner
+}
 
 // withTwoFA 注入可控的 2FA 校验器，覆盖「验证通过」这条真实实现尚未提供的分支。
 func withTwoFA(v auth.TwoFAVerifier) appOption {
-	return func(d *auth.Deps) { d.TwoFA = v }
+	return func(o *appOptions) {
+		o.authMutators = append(o.authMutators, func(d *auth.Deps) { d.TwoFA = v })
+	}
+}
+
+// withWebServer 让网站模块使用可控的命令执行器，不依赖宿主机真装 Nginx。
+func withWebServer(runner webserver.Runner) appOption {
+	return func(o *appOptions) { o.websiteRunner = runner }
 }
 
 // stubTwoFA 只接受指定的 TOTP 动态码，其余一律 110010。
@@ -74,6 +97,11 @@ func (s stubTwoFA) Verify(_ context.Context, _ int64, method, code string) error
 func newApp(t *testing.T, opts ...appOption) *app {
 	t.Helper()
 	ctx := context.Background()
+
+	var options appOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 
 	db, err := repository.Open(&config.DatabaseConfig{
 		Driver:          repository.DriverSQLite,
@@ -107,8 +135,8 @@ func newApp(t *testing.T, opts ...appOption) *app {
 		Users: users, Roles: roles, Sessions: sessions,
 		Hasher: hasher, Tokens: tokens, Revokes: revokes,
 	}
-	for _, opt := range opts {
-		opt(&deps)
+	for _, mutate := range options.authMutators {
+		mutate(&deps)
 	}
 	svc, err := auth.New(deps, auth.Config{LoginFailLimit: 5, LockDuration: 15 * time.Minute})
 	require.NoError(t, err)
@@ -135,14 +163,43 @@ func newApp(t *testing.T, opts ...appOption) *app {
 	})
 	require.NoError(t, err)
 
+	// 网站模块：默认测试环境没有 Nginx，用指向不存在可执行文件的配置验证
+	// 「前置条件缺失」这条真实路径；注入 withWebServer 后才走正向流程。
+	websiteBase := t.TempDir()
+	websiteCfg := config.WebsiteConfig{
+		Enabled:    true,
+		ServerType: "auto",
+		NginxBin:   filepath.Join(websiteBase, "absent-nginx"),
+		VhostDir:   filepath.Join(websiteBase, "vhost"),
+		WwwRoot:    filepath.Join(websiteBase, "wwwroot"),
+		LogDir:     filepath.Join(websiteBase, "wwwlogs"),
+		BackupKeep: 20,
+	}
+	var siteRunner webserver.Runner = webserver.NewExecRunner(2 * time.Second)
+	if options.websiteRunner != nil {
+		// 假 nginx 只需存在且可执行，Detect 的 stat 检查就能通过，
+		// 真正的命令行为由注入的 Runner 决定。
+		websiteCfg.NginxBin = filepath.Join(websiteBase, "nginx")
+		require.NoError(t, os.WriteFile(websiteCfg.NginxBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+		siteRunner = options.websiteRunner
+	}
+	renderer, err := sitesvc.NewRenderer("")
+	require.NoError(t, err)
+	siteSvc := sitesvc.NewService(
+		repository.NewSiteRepository(db, idgen.NextID),
+		webserver.NewManager(websiteCfg, siteRunner),
+		renderer, websiteCfg, 34567, []string{websiteCfg.WwwRoot}, idgen.NextID,
+	)
+
 	engine, err := v1.NewEngine(v1.Options{
 		Auth:   handler.NewAuth(svc, false), // 测试走 HTTP，不设置 Secure
 		Health: handler.NewHealth(db, handler.BuildInfo{Version: "test"}, time.Now()),
 		File:   handler.NewFile(fileSvc),
 		System: handler.NewSystem(
 			sysinfo.NewCollector(sysinfo.Build{Version: "test", Commit: "deadbeef"}, time.Now(), t.TempDir()), db),
-		Admin:  handler.NewAdmin(users, roles),
-		AuthMW: authMW,
+		Admin:   handler.NewAdmin(users, roles),
+		Website: handler.NewWebsite(siteSvc),
+		AuthMW:  authMW,
 	})
 	require.NoError(t, err)
 
@@ -152,7 +209,9 @@ func newApp(t *testing.T, opts ...appOption) *app {
 		middleware.RequirePermission("user:user:create"),
 		func(c *gin.Context) { response.OK(c, gin.H{"ok": true}) })
 
-	return &app{handlerT: engine, db: db, revokes: revokes, tokens: tokens, sessions: sessions, authMW: authMW, fileRoot: fileRoot}
+	return &app{handlerT: engine, db: db, revokes: revokes, tokens: tokens, sessions: sessions,
+		authMW: authMW, fileRoot: fileRoot,
+		websiteVhost: websiteCfg.VhostDir, websiteRoot: websiteCfg.WwwRoot, websiteLogDir: websiteCfg.LogDir}
 }
 
 type envelope struct {

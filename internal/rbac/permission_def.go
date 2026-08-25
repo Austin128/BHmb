@@ -67,10 +67,37 @@ var (
 	rReadDev = []string{model.RoleAdmin, model.RoleOps, model.RoleDeveloper, model.RoleAuditor, model.RoleReadonly}
 )
 
-// Permissions 为 M0 与文件管理（M1）覆盖的权限点。
+// Permissions 为 M0、文件管理（M1）与网站管理（M2）覆盖的权限点。
 // 其余模块随对应里程碑追加，id 顺延分配，已分配的 id 不得复用。
 var Permissions = []Permission{
 	{ID: 1001, Code: "dashboard:overview:read", Name: "查看总览", Module: "dashboard", Resource: "overview", Action: "read", Roles: rAll},
+
+	// 声明顺序即菜单顺序：建站与文件是日常运维入口，排在账号与系统设置之前。
+	// id 不随声明位置变动，已分配的 id 不得复用。
+	{ID: 1031, Code: "website:site:list", Name: "站点列表", Module: "website", Resource: "site", Action: "list", Roles: rReadDev},
+	{ID: 1032, Code: "website:site:read", Name: "站点详情", Module: "website", Resource: "site", Action: "read", Roles: rReadDev},
+	{ID: 1033, Code: "website:site:create", Name: "创建站点", Module: "website", Resource: "site", Action: "create", Roles: rWriteDev},
+	{ID: 1034, Code: "website:site:update", Name: "编辑站点与域名", Module: "website", Resource: "site", Action: "update", Roles: rWriteDev},
+	{ID: 1035, Code: "website:site:delete", Name: "删除站点", Module: "website", Resource: "site", Action: "delete", Sensitive: true, Roles: rWriteDev},
+	{ID: 1036, Code: "website:site:exec", Name: "启停站点与重载服务", Module: "website", Resource: "site", Action: "exec", Sensitive: true, Roles: rWriteDev},
+	{ID: 1037, Code: "website:config:read", Name: "查看站点配置", Module: "website", Resource: "config", Action: "read", Roles: rReadDev},
+	{ID: 1038, Code: "website:config:update", Name: "编辑站点配置与回滚", Module: "website", Resource: "config", Action: "update", Sensitive: true, Roles: rWriteDev},
+	{ID: 1039, Code: "website:setting:read", Name: "查看站点设置", Module: "website", Resource: "setting", Action: "read", Roles: rReadDev},
+	{ID: 1040, Code: "website:setting:update", Name: "修改站点设置", Module: "website", Resource: "setting", Action: "update", Roles: rWriteDev},
+	// 伪静态是直接下发到 Nginx 的原始片段，风险高于普通设置项，单列权限并标记为敏感。
+	{ID: 1041, Code: "website:rewrite:read", Name: "查看伪静态规则", Module: "website", Resource: "rewrite", Action: "read", Roles: rReadDev},
+	{ID: 1042, Code: "website:rewrite:update", Name: "修改伪静态规则", Module: "website", Resource: "rewrite", Action: "update", Sensitive: true, Roles: rWriteDev},
+	// 日志可能含访客 IP 与 URL 参数，读权限与站点详情一致；清空不可撤销，标记为敏感。
+	{ID: 1043, Code: "website:log:read", Name: "查看站点日志", Module: "website", Resource: "log", Action: "read", Roles: rReadDev},
+	{ID: 1044, Code: "website:log:exec", Name: "清空站点日志", Module: "website", Resource: "log", Action: "exec", Sensitive: true, Roles: rWriteDev},
+
+	{ID: 1024, Code: "file:file:list", Name: "浏览目录", Module: "file", Resource: "file", Action: "list", Roles: rReadDev},
+	{ID: 1025, Code: "file:file:read", Name: "读取与下载文件", Module: "file", Resource: "file", Action: "read", Roles: rReadDev},
+	{ID: 1026, Code: "file:file:create", Name: "新建与上传文件", Module: "file", Resource: "file", Action: "create", Roles: rWriteDev},
+	{ID: 1027, Code: "file:file:update", Name: "编辑与移动文件", Module: "file", Resource: "file", Action: "update", Roles: rWriteDev},
+	{ID: 1028, Code: "file:file:delete", Name: "删除文件", Module: "file", Resource: "file", Action: "delete", Sensitive: true, Roles: rWriteDev},
+	{ID: 1029, Code: "file:file:exec", Name: "压缩与解压", Module: "file", Resource: "file", Action: "exec", Roles: rWriteDev},
+	{ID: 1030, Code: "file:permission:update", Name: "修改文件权限与属主", Module: "file", Resource: "permission", Action: "update", Sensitive: true, Roles: rAdminOps},
 
 	{ID: 1002, Code: "user:user:list", Name: "用户列表", Module: "user", Resource: "user", Action: "list", Roles: rReadTeam},
 	{ID: 1003, Code: "user:user:read", Name: "用户详情", Module: "user", Resource: "user", Action: "read", Roles: rReadTeam},
@@ -95,14 +122,6 @@ var Permissions = []Permission{
 	{ID: 1021, Code: "ops:task:delete", Name: "取消/清理任务", Module: "ops", Resource: "task", Action: "delete", Roles: rAdminOps},
 	{ID: 1022, Code: "ops:tenant:list", Name: "租户列表", Module: "ops", Resource: "tenant", Action: "list", Roles: rReadTeam},
 	{ID: 1023, Code: "ops:upgrade:read", Name: "查看版本与更新", Module: "ops", Resource: "upgrade", Action: "read", Roles: rReadOps},
-
-	{ID: 1024, Code: "file:file:list", Name: "浏览目录", Module: "file", Resource: "file", Action: "list", Roles: rReadDev},
-	{ID: 1025, Code: "file:file:read", Name: "读取与下载文件", Module: "file", Resource: "file", Action: "read", Roles: rReadDev},
-	{ID: 1026, Code: "file:file:create", Name: "新建与上传文件", Module: "file", Resource: "file", Action: "create", Roles: rWriteDev},
-	{ID: 1027, Code: "file:file:update", Name: "编辑与移动文件", Module: "file", Resource: "file", Action: "update", Roles: rWriteDev},
-	{ID: 1028, Code: "file:file:delete", Name: "删除文件", Module: "file", Resource: "file", Action: "delete", Sensitive: true, Roles: rWriteDev},
-	{ID: 1029, Code: "file:file:exec", Name: "压缩与解压", Module: "file", Resource: "file", Action: "exec", Roles: rWriteDev},
-	{ID: 1030, Code: "file:permission:update", Name: "修改文件权限与属主", Module: "file", Resource: "permission", Action: "update", Sensitive: true, Roles: rAdminOps},
 }
 
 // PermissionCodes 返回全部权限点标识。

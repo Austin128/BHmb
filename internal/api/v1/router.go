@@ -28,6 +28,8 @@ type Options struct {
 	System *handler.System
 	// Admin 为账号、角色与权限点的只读查询处理器。
 	Admin *handler.Admin
+	// Website 为站点管理处理器；为空时不注册网站路由（网站模块关闭）。
+	Website *handler.Website
 	// AuthMW 为认证中间件依赖，受保护路由使用。
 	AuthMW middleware.AuthDeps
 	// StaticFS 为已构建的前端静态资源；为空时不注册 SPA 路由（例如纯 API 部署）。
@@ -93,6 +95,52 @@ func Register(e *gin.Engine, o Options) {
 	registerFile(authed, o.File)
 	registerSystem(authed, o.System)
 	registerAdmin(authed, o.Admin)
+	registerWebsite(authed, o.Website)
+}
+
+// registerWebsite 注册网站路由。读、写、启停、删除与配置编辑分开鉴权，
+// 其中启停、删除、配置编辑属于敏感操作（见 rbac 中的 Sensitive 标记）。
+func registerWebsite(authed *gin.RouterGroup, h *handler.Website) {
+	if h == nil {
+		return
+	}
+	g := authed.Group("/website")
+
+	list := g.Group("", middleware.RequirePermission("website:site:list"))
+	list.GET("/env", h.Env)
+	list.GET("/sites", h.List)
+
+	read := g.Group("", middleware.RequirePermission("website:site:read"))
+	read.GET("/sites/:id", h.Get)
+
+	g.POST("/sites", middleware.RequirePermission("website:site:create"), h.Create)
+	g.PUT("/sites/:id", middleware.RequirePermission("website:site:update"), h.Update)
+	g.DELETE("/sites/:id", middleware.RequirePermission("website:site:delete"), h.Delete)
+
+	exec := g.Group("", middleware.RequirePermission("website:site:exec"))
+	exec.POST("/sites/:id/status", h.ChangeStatus)
+	exec.POST("/sites/:id/rebuild", h.Rebuild)
+	exec.POST("/nginx/reload", h.Reload)
+	exec.POST("/nginx/test", h.Test)
+
+	g.GET("/sites/:id/config", middleware.RequirePermission("website:config:read"), h.Config)
+
+	cfgWrite := g.Group("", middleware.RequirePermission("website:config:update"))
+	cfgWrite.PUT("/sites/:id/config", h.SaveConfig)
+	cfgWrite.POST("/sites/:id/config/rollback/:version", h.Rollback)
+
+	g.GET("/sites/:id/settings", middleware.RequirePermission("website:setting:read"), h.Settings)
+	g.PUT("/sites/:id/settings", middleware.RequirePermission("website:setting:update"), h.SaveSettings)
+
+	// 规则库只是内置模板清单，与站点无关，读权限与站点伪静态一致。
+	rewriteRead := g.Group("", middleware.RequirePermission("website:rewrite:read"))
+	rewriteRead.GET("/rewrite/templates", h.RewriteTemplates)
+	rewriteRead.GET("/sites/:id/rewrite", h.Rewrite)
+
+	g.PUT("/sites/:id/rewrite", middleware.RequirePermission("website:rewrite:update"), h.SaveRewrite)
+
+	g.GET("/sites/:id/logs", middleware.RequirePermission("website:log:read"), h.Logs)
+	g.POST("/sites/:id/logs/clear", middleware.RequirePermission("website:log:exec"), h.ClearLog)
 }
 
 // registerSystem 注册主机信息路由。总览页与运维页共用同一份快照，

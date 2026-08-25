@@ -19,6 +19,7 @@ type Config struct {
 	Agent    AgentConfig    `mapstructure:"agent"`
 	Security SecurityConfig `mapstructure:"security"`
 	File     FileConfig     `mapstructure:"file"`
+	Website  WebsiteConfig  `mapstructure:"website"`
 	Monitor  MonitorConfig  `mapstructure:"monitor"`
 	Log      LogConfig      `mapstructure:"log"`
 	Runtime  RuntimeConfig  `mapstructure:"runtime"`
@@ -172,6 +173,30 @@ type FileConfig struct {
 	UploadTempDir string `mapstructure:"upload_temp_dir"`
 }
 
+// WebsiteConfig 为建站模块配置（docs/07 7.4.3 目录布局）。
+// 面板只写 vhost 目录下的文件，主配置由安装脚本 include 该目录，
+// 因此换 Nginx 版本或手工调优主配置都不会影响站点下发。
+type WebsiteConfig struct {
+	// Enabled 为假时不注册建站路由，用于纯 API 或不托管 Web 服务的部署。
+	Enabled bool `mapstructure:"enabled"`
+	// ServerType 取 auto/nginx/openresty，auto 表示按可执行文件探测。
+	ServerType string `mapstructure:"server_type"`
+	// NginxBin 为 nginx 可执行文件路径，为空时在 PATH 与常见安装位置探测。
+	NginxBin string `mapstructure:"nginx_bin"`
+	// VhostDir 存放站点 server 块，是面板唯一有写权限的配置目录。
+	VhostDir string `mapstructure:"vhost_dir"`
+	// WwwRoot 为新建站点根目录的父目录。
+	WwwRoot string `mapstructure:"www_root"`
+	// LogDir 为站点访问与错误日志目录。
+	LogDir string `mapstructure:"log_dir"`
+	// ReloadCmd 为自定义热加载命令，为空时用 <nginx_bin> -s reload。
+	ReloadCmd string `mapstructure:"reload_cmd"`
+	// Owner 为站点目录属主，留空则不改属主（容器内常无 www 用户）。
+	Owner string `mapstructure:"owner"`
+	// BackupKeep 为每站点保留的配置版本数，超出的物理清理。
+	BackupKeep int `mapstructure:"backup_keep"`
+}
+
 // RuntimeConfig 为并发与限流配置。
 type RuntimeConfig struct {
 	TaskPoolSize       int `mapstructure:"task_pool_size"`
@@ -296,6 +321,17 @@ func setDefaults(v *viper.Viper) {
 		"file.max_list_entries":   5000,
 		"file.max_search_results": 1000,
 		"file.upload_temp_dir":    "",
+
+		// 建站：面板只管 vhost 目录，站点目录与日志沿用主流面板的 /www 布局。
+		"website.enabled":     true,
+		"website.server_type": "auto",
+		"website.nginx_bin":   "",
+		"website.vhost_dir":   "/opt/novapanel/data/vhost",
+		"website.www_root":    "/www/wwwroot",
+		"website.log_dir":     "/www/wwwlogs",
+		"website.reload_cmd":  "",
+		"website.owner":       "www",
+		"website.backup_keep": 20,
 
 		"monitor.enabled":              true,
 		"monitor.collect_interval":     "15s",

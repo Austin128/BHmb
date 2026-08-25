@@ -86,6 +86,7 @@ func (c *Config) Validate() error {
 	c.validateKV(v)
 	c.validateAgent(v)
 	c.validateSecurity(v)
+	c.validateWebsite(v)
 	c.validateMonitor(v)
 	c.validateLog(v)
 	c.validateRuntime(v)
@@ -234,6 +235,33 @@ func (c *Config) validateSecurity(v *validator) {
 		if net.ParseIP(entry) == nil {
 			v.addf(fmt.Sprintf("security.ip_whitelist[%d]", i), "非法 IP：%s", entry)
 		}
+	}
+}
+
+// validateWebsite 只校验配置自身的自洽性。Nginx 是否已安装属于运行时状态，
+// 由建站服务在下发时探测并返回可操作的提示，启动阶段不因未装 Web 服务而拒绝运行。
+func (c *Config) validateWebsite(v *validator) {
+	w := c.Website
+	if !w.Enabled {
+		return
+	}
+	v.oneOf("website.server_type", w.ServerType, "auto", "nginx", "openresty")
+	absDir(v, "website.vhost_dir", w.VhostDir)
+	absDir(v, "website.www_root", w.WwwRoot)
+	absDir(v, "website.log_dir", w.LogDir)
+	if w.NginxBin != "" && !filepath.IsAbs(w.NginxBin) {
+		v.addf("website.nginx_bin", "必须是绝对路径，当前 %q", w.NginxBin)
+	}
+	v.positiveInt("website.backup_keep", w.BackupKeep)
+}
+
+func absDir(v *validator, key, dir string) {
+	if dir == "" {
+		v.add(key, "不能为空")
+		return
+	}
+	if !filepath.IsAbs(dir) {
+		v.addf(key, "必须是绝对路径，当前 %q", dir)
 	}
 }
 

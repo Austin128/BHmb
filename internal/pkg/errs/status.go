@@ -73,6 +73,17 @@ var statusMap = map[int]int{
 	CodeFileChanged:        http.StatusConflict,
 	CodeProtectedPath:      http.StatusForbidden,
 	CodeDiskFull:           http.StatusInsufficientStorage,
+
+	CodeDomainExists:        http.StatusConflict,
+	CodeDomainInvalid:       http.StatusBadRequest,
+	CodeSiteNotFound:        http.StatusNotFound,
+	CodeSiteRootConflict:    http.StatusConflict,
+	CodeNginxTestFailed:     http.StatusBadRequest,
+	CodePortOccupied:        http.StatusConflict,
+	CodeRewriteInvalid:      http.StatusBadRequest,
+	CodeSiteStopped:         http.StatusConflict,
+	CodeUpstreamUnreachable: http.StatusBadRequest,
+	CodeRuntimeInUse:        http.StatusConflict,
 }
 
 // Codes 返回所有已登记的错误码，供一致性校验与 golden 测试使用。

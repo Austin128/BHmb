@@ -24,6 +24,7 @@ import (
 	"github.com/novapanel/novapanel/internal/api/v1/middleware"
 	"github.com/novapanel/novapanel/internal/pkg/config"
 	"github.com/novapanel/novapanel/internal/pkg/errs"
+	"github.com/novapanel/novapanel/internal/pkg/idgen"
 	"github.com/novapanel/novapanel/internal/pkg/logx"
 	"github.com/novapanel/novapanel/internal/repository"
 	"github.com/novapanel/novapanel/internal/repository/migrate"
@@ -32,7 +33,9 @@ import (
 	"github.com/novapanel/novapanel/internal/service/auth"
 	filesvc "github.com/novapanel/novapanel/internal/service/file"
 	"github.com/novapanel/novapanel/internal/service/file/pathguard"
+	sitesvc "github.com/novapanel/novapanel/internal/service/site"
 	"github.com/novapanel/novapanel/internal/service/sysinfo"
+	"github.com/novapanel/novapanel/internal/service/webserver"
 	"github.com/novapanel/novapanel/internal/web"
 	"github.com/novapanel/novapanel/migrations"
 )
@@ -238,6 +241,10 @@ func (a *App) initHTTP() error {
 		opts.File = handler.NewFile(fileSvc)
 	}
 
+	if err := a.initWebsite(&opts); err != nil {
+		return err
+	}
+
 	if web.Available() {
 		opts.StaticFS = web.MustFS()
 	} else {
@@ -265,6 +272,41 @@ func (a *App) initHTTP() error {
 		}
 	}
 	return nil
+}
+
+// initWebsite 装配网站模块。宿主机是否安装 Nginx/OpenResty 属于运行时前提，
+// 探测失败只影响具体操作并由接口回报明确原因，不阻止面板启动。
+func (a *App) initWebsite(opts *v1.Options) error {
+	if !a.cfg.Website.Enabled {
+		logx.L().Warn("website.enabled=false，网站管理模块已禁用")
+		return nil
+	}
+	// 用户自定义模板放在 vhost 目录下的 tmpl/<engine>/，缺失时使用内置模板。
+	renderer, err := sitesvc.NewRenderer(filepath.Join(a.cfg.Website.VhostDir, "tmpl"))
+	if err != nil {
+		return err
+	}
+	manager := webserver.NewManager(a.cfg.Website, webserver.NewExecRunner(0))
+	svc := sitesvc.NewService(
+		repository.NewSiteRepository(a.db, idgen.NextID),
+		manager,
+		renderer,
+		a.cfg.Website,
+		a.cfg.Server.Port,
+		a.websiteRoots(),
+		idgen.NextID,
+	)
+	opts.Website = handler.NewWebsite(svc)
+	return nil
+}
+
+// websiteRoots 汇总站点根目录允许范围：站点默认根目录，加上文件模块已放行的目录，
+// 使建站不能绕过既有的路径管控，同时允许把站点建在运维已批准的其它目录下。
+func (a *App) websiteRoots() []string {
+	roots := make([]string, 0, len(a.cfg.File.AllowRoots)+1)
+	roots = append(roots, a.cfg.Website.WwwRoot)
+	roots = append(roots, a.cfg.File.AllowRoots...)
+	return roots
 }
 
 // dataDir 返回本机数据落盘目录，用于总览页展示所在磁盘容量。
