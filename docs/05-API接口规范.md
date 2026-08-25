@@ -596,15 +596,15 @@ m = g(r.sub, p.sub, r.dom) && r.dom == p.dom \
 | --- | --- | --- |
 | `sub` | `u:<userId>` 或 `r:<roleCode>` | `u:1832746500123456789`、`r:ops` |
 | `dom` | `tenant_id` 字符串，单租户固定 `0` | `0` |
-| `obj` | 权限点，支持 `*` 通配 | `web:site:create`、`web:site:*`、`*:*:*` |
+| `obj` | 权限点，支持 `*` 通配 | `website:site:create`、`website:site:*`、`*:*:*` |
 | `act` | 固定 `access`（权限点已含 action 语义），保留位用于未来字段级控制 | `access` |
 | `eft` | `allow` / `deny`，deny 优先 | `deny` |
 
 策略行示例（对应 `sys_casbin_rule`）：
 
 ```csv
-p, r:ops,      0, web:site:*,        access, allow
-p, r:ops,      0, web:site:delete,   access, deny      # 运维可建改站点但不可删除
+p, r:ops,      0, website:site:*,      access, allow
+p, r:ops,      0, website:site:delete, access, deny      # 运维可建改站点但不可删除
 p, r:readonly, 0, *:*:list,          access, allow
 p, r:readonly, 0, *:*:read,          access, allow
 p, u:1832746500123456789, 0, sec:waf:update, access, allow   # 用户级临时加权
@@ -1188,35 +1188,39 @@ POST /api/v1/auth/confirm         { "permission": "cluster:node:delete", "passwo
 
 ### 5.7.3 网站、证书、数据库与运行环境
 
+网站模块第一期已落地的接口在说明里标注「已实现」，其余为后续里程碑规划。第一期把「站点设置」聚合成 `settings` 单接口（一次提交完整状态，避免 security / logs / redirect 三个半截接口互相覆盖），并把伪静态与日志拆成独立权限点，权限点清单见 [数据库设计](./04-数据库设计.md) 4.18.2。
+
 | 方法与路径 | 说明 | 权限点 | 节点 | 幂等 | 确认 |
 | --- | --- | --- | --- | --- | --- |
-| `GET /website/sites` | 站点列表 | `website:site:list` | M | — | |
-| `POST /website/sites` | 创建站点（静态、PHP、反代、Node、Java、Python、负载均衡） | `website:site:create` | Y | I | |
-| `GET /website/sites/{id}` | 站点详情 | `website:site:read` | Y | — | |
-| `PUT /website/sites/{id}` | 修改基础配置 | `website:site:update` | Y | — | |
-| `DELETE /website/sites/{id}` | 删除站点，可选连带目录与数据库 | `website:site:delete` | Y | — | C |
-| `PUT /website/sites/{id}/status` | 启停站点 | `website:site:update` | Y | — | |
-| `GET /website/sites/{id}/domains` | 域名与端口绑定列表 | `website:site:read` | Y | — | |
-| `POST /website/sites/{id}/domains` | 新增域名绑定 | `website:site:update` | Y | I | |
-| `DELETE /website/sites/{id}/domains/{did}` | 解绑域名 | `website:site:update` | Y | — | |
-| `GET /website/sites/{id}/config` | 读取 OpenResty 配置原文 | `website:site:read` | Y | — | |
-| `PUT /website/sites/{id}/config` | 直接编辑配置（先 test 后 reload，失败回滚） | `website:site:update` | Y | — | C |
-| `GET /website/sites/{id}/rewrite` | 伪静态规则 | `website:site:read` | Y | — | |
-| `PUT /website/sites/{id}/rewrite` | 设置伪静态（内置模板或自定义） | `website:site:update` | Y | — | |
-| `GET /website/sites/{id}/ssl` | SSL 配置与当前证书 | `website:site:read` | Y | — | |
-| `PUT /website/sites/{id}/ssl` | 绑定证书、开关强制跳转与 HSTS | `website:site:update` | Y | — | |
-| `GET /website/sites/{id}/logs` | 访问与错误日志配置及切割策略 | `website:site:read` | Y | — | |
-| `PUT /website/sites/{id}/logs` | 修改日志配置 | `website:site:update` | Y | — | |
-| `GET /website/sites/{id}/security` | 防盗链、IP 黑白名单、目录保护、限速 | `website:site:read` | Y | — | |
-| `PUT /website/sites/{id}/security` | 修改站点安全策略 | `website:site:update` | Y | — | |
-| `POST /website/sites/{id}/redirect` | 配置重定向规则 | `website:site:update` | Y | — | |
-| `GET /website/sites/{id}/backups` | 站点备份列表 | `website:site:read` | Y | — | |
-| `POST /website/sites/{id}/backups` | 立即备份站点 | `website:site:exec` | Y | I | |
-| `GET /website/templates` | 站点类型模板与默认参数 | `website:site:list` | — | — | |
-| `POST /website/nginx/reload` | 全局 reload | `website:service:exec` | Y | — | |
-| `GET /website/nginx/config` | 主配置与性能参数 | `website:service:read` | Y | — | |
-| `PUT /website/nginx/config` | 修改主配置 | `website:service:update` | Y | — | C |
-| `GET /website/nginx/status` | 连接数、QPS、worker 状态 | `website:service:read` | Y | — | |
+| `GET /website/env` | 已实现。运行环境探测（Nginx 版本、托管目录、可建站点类型） | `website:site:list` | M | — | |
+| `GET /website/sites` | 已实现。站点列表 | `website:site:list` | M | — | |
+| `POST /website/sites` | 已实现。创建站点，第一期支持静态与反代；PHP、Node、Java、Python、负载均衡后续补齐 | `website:site:create` | Y | I | |
+| `GET /website/sites/{id}` | 已实现。站点详情，含域名绑定与最近一次下发状态 | `website:site:read` | Y | — | |
+| `PUT /website/sites/{id}` | 已实现。修改基础配置与域名绑定（整体替换语义） | `website:site:update` | Y | — | |
+| `DELETE /website/sites/{id}` | 已实现。删除站点，可选把站点目录移入回收站 | `website:site:delete` | Y | — | C |
+| `POST /website/sites/{id}/status` | 已实现。启停站点 | `website:site:exec` | Y | — | |
+| `POST /website/sites/{id}/rebuild` | 已实现。按数据库当前状态重新渲染并下发配置 | `website:site:exec` | Y | I | |
+| `GET /website/sites/{id}/config` | 已实现。读取 vhost 配置原文与版本历史 | `website:config:read` | Y | — | |
+| `PUT /website/sites/{id}/config` | 已实现。直接编辑配置，带乐观版本号，先 test 后 reload，失败回滚 | `website:config:update` | Y | — | C |
+| `POST /website/sites/{id}/config/rollback/{version}` | 已实现。回滚到历史版本 | `website:config:update` | Y | — | C |
+| `GET /website/sites/{id}/settings` | 已实现。站点设置：默认文档、运行目录、目录列表、缓存、防盗链、IP/UA 限制、重定向、限速、日志开关 | `website:setting:read` | Y | — | |
+| `PUT /website/sites/{id}/settings` | 已实现。修改站点设置（整体替换，渲染后 test 再 reload） | `website:setting:update` | Y | — | |
+| `GET /website/rewrite/templates` | 已实现。内置伪静态规则库 | `website:rewrite:read` | — | — | |
+| `GET /website/sites/{id}/rewrite` | 已实现。站点伪静态规则 | `website:rewrite:read` | Y | — | |
+| `PUT /website/sites/{id}/rewrite` | 已实现。设置伪静态（内置模板或自定义，指令白名单校验） | `website:rewrite:update` | Y | — | |
+| `GET /website/sites/{id}/logs` | 已实现。读取日志尾部，`type=access\|error`、`lines=N` | `website:log:read` | Y | — | |
+| `POST /website/sites/{id}/logs/clear` | 已实现。清空日志，截断保留 inode 因此无需 reload | `website:log:exec` | Y | I | C |
+| `POST /website/nginx/test` | 已实现。执行 `nginx -t` 并返回输出 | `website:site:exec` | Y | I | |
+| `POST /website/nginx/reload` | 已实现。全局 reload | `website:site:exec` | Y | — | |
+| `GET /website/sites/{id}/ssl` | 规划。SSL 配置与当前证书 | `website:ssl:read` | Y | — | |
+| `PUT /website/sites/{id}/ssl` | 规划。绑定证书、开关强制跳转与 HSTS | `website:ssl:update` | Y | — | |
+| `PUT /website/sites/{id}/logs/rotate` | 规划。日志切割策略 | `website:log:exec` | Y | — | |
+| `GET /website/sites/{id}/backups` | 规划。站点备份列表 | `website:backup:list` | Y | — | |
+| `POST /website/sites/{id}/backups` | 规划。立即备份站点 | `website:backup:create` | Y | I | |
+| `GET /website/templates` | 规划。站点类型模板与默认参数 | `website:site:list` | — | — | |
+| `GET /website/nginx/config` | 规划。主配置与性能参数 | `website:service:read` | Y | — | |
+| `PUT /website/nginx/config` | 规划。修改主配置 | `website:service:update` | Y | — | C |
+| `GET /website/nginx/status` | 规划。连接数、QPS、worker 状态 | `website:service:read` | Y | — | |
 | `GET /cert/certs` | 证书列表含到期天数 | `cert:cert:list` | M | — | |
 | `POST /cert/certs` | 上传自有证书 | `cert:cert:create` | — | I | |
 | `GET /cert/certs/{id}` | 证书详情与部署引用 | `cert:cert:read` | — | — | |
